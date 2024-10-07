@@ -4,10 +4,13 @@ import (
 	"cheyne.nz/ubatch/pkg/ubatch/types"
 	"cheyne.nz/ubatch/test/util/perf/feeder"
 	"github.com/stretchr/testify/assert"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 )
+
+var logger = slog.Default()
 
 // The InputReceiver supports multiple users submitting Jobs concurrently.
 // Jobs are transferred from the receiver channel to the queue.
@@ -25,7 +28,7 @@ func (input *InputReceiver[T]) waitForPending() {
 // TestInputReceiver_SingleUser_Submit validates the job Submit process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = newInputReceiver[int](conf)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -57,15 +60,16 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 
 	// The queue should contain sequential jobs from 1 to 11200
 	for i := 0; i < 11200; i++ {
-		assert.Equal(t, (*inputReceiver.queue)[i].Data, i+1)
-		assert.Equal(t, (*inputReceiver.queue)[i].Id, i+1)
+		expected := i + 1
+		assert.Equal(t, (*inputReceiver.queue)[i].Data, expected)
+		assert.Equal(t, (*inputReceiver.queue)[i].Id, types.Id(expected))
 	}
 }
 
 // TestInputReceiver_MultiUser_Submit validates the job Submit process for multiple concurrent consumers
 func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = newInputReceiver[int](conf)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -100,7 +104,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 // TestInputReceiver_SingleUser_PrepareBatch
 func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = newInputReceiver[int](conf)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -137,7 +141,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 // batch could vary depending on the contents of the queue when PrepareBatch triggers
 func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = newInputReceiver[int](conf)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -179,7 +183,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 // TestInputReceiver_MultiUser_Concurrent_PrepareBatch verifies that
 func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = newInputReceiver[int](conf)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -235,3 +239,15 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 
 // TODO: Test Start / Stop  behaviour
 //       (This can be done later, as core algorithm is more important)
+
+func TestInputReceiver_nil_logger(t *testing.T) {
+	var conf = DefaultConfig.Input
+	var inputReceiver = NewInputReceiver[int](conf, nil)
+	jobs := feeder.NewSequentialJobFeeder()
+	inputReceiver.Start()
+	inputReceiver.Submit(jobs.Feed())
+	inputReceiver.waitForPending()
+	jobsBatch := inputReceiver.PrepareBatch()
+	assert.Equal(t, jobsBatch[0].Id, types.Id(1))
+
+}

@@ -4,6 +4,8 @@ import (
 	. "cheyne.nz/ubatch/pkg/ubatch/types"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -71,12 +73,13 @@ type InputReceiver[T any] struct {
 	//       consider likelihood and mitigations
 	muQueue sync.RWMutex
 	queue   *[]Job[T]
+	log     *slog.Logger
 }
 
 // Submit a job to the InputReceiver
 func (input *InputReceiver[T]) Submit(job Job[T]) {
 	input.pending.Add(1)
-	fmt.Fprintf(os.Stdout, "pending in is %d\n", input.pending.Load())
+	input.log.Debug("Job Submitted.", "PendingItems", input.pending.Load())
 	input.receiver <- job
 }
 
@@ -86,19 +89,19 @@ func (input *InputReceiver[T]) Start() {
 		go func() {
 			defer input.running.Store(false)
 			input.accept = true
-			fmt.Fprintf(os.Stdout, "starting input\n")
+			input.log.Info("Starting input receiver.")
 			for {
 				select {
 				case job, ok := <-input.receiver:
-					fmt.Fprintf(os.Stdout, "input recieved %d\n", job.Id)
+					input.log.Info("Job received", "Id", job.Id)
 					if !ok {
+						input.log.Info("Input Receiver channel closed")
 						// TODO: log we are shutting down input queue
 						// TODO: do we clear the pending?
-						fmt.Fprintf(os.Stdout, "input channel closed\n")
 						return
 					} else {
 						input.pending.Add(-1)
-						fmt.Fprintf(os.Stdout, "pending is %d\n", input.pending.Load())
+						input.log.Debug("Pending input", "PendingItems", input.pending.Load())
 						input.muQueue.RLock()
 						*(input.queue) = append(*(input.queue), job)
 						input.muQueue.RUnlock()
@@ -107,24 +110,25 @@ func (input *InputReceiver[T]) Start() {
 			}
 		}()
 	} else {
-
-		// TODO: log a Error, trying to start something twice
-		// and then do nothing
+		input.log.Error("InputReceiver is already running. Cannot start it twice.")
 	}
 }
 
 // Stop signals the InputQueue to stop accepting new jobs
 func (input *InputReceiver[T]) Stop() {
 	if input.running.Load() {
+		input.log.Info("Stopping InputReceiver.")
 		input.accept = false
 		close(input.receiver)
 	} else {
-		// log an Error, cannot stop something that is not running
+		input.log.Error("InputReceiver is not running running.")
 	}
 }
 
 // PrepareBatch creates a batch with all items from the InputReceiver and resets it to an empty state
 func (input *InputReceiver[T]) PrepareBatch() []Job[T] {
+	input.log.Debug("Preparing batch.")
+
 	// FIXME:  test / fix highWater
 	// Set the input queue capacity to the highest value seen
 	// There are other ways to sizing this, this approach minimizes resizing but will use more memory on average
@@ -135,15 +139,25 @@ func (input *InputReceiver[T]) PrepareBatch() []Job[T] {
 	batch := *input.queue
 	input.queue = &emtpy
 	input.muQueue.Unlock()
-
+	input.log.Debug("Batch prepared.", "BatchSize", len(batch))
 	return batch
 }
 
-func newInputReceiver[T any](opts InputOptions) InputReceiver[T] {
+// NewInputReceiver creates a new InputReceiver
+//
+// logger - optional
+func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiver[T] {
 	queue := make([]Job[T], 0, opts.Queue.Size)
+	if logger == nil {
+		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
+		handler := slog.NewTextHandler(io.Discard, nil)
+		logger = slog.New(handler)
+	}
+
 	return InputReceiver[T]{
 		receiver: make(chan Job[T], opts.Channel.Size),
 		queue:    &queue,
+		log:      logger,
 	}
 }
 
@@ -155,10 +169,13 @@ func (mb *MicroBatcher[T, _]) Shutdown() {
 }
 
 func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R]) MicroBatcher[T, R] {
+	// TODO: Inject log
+	var log *slog.Logger = slog.Default()
+
 	return MicroBatcher[T, R]{
 		config:         conf,
 		BatchProcessor: processor,
-		input:          newInputReceiver[T](conf.Input),
+		input:          NewInputReceiver[T](conf.Input, log),
 		event:          newEventBus(),
 		response:       make(map[Id]Result[R]),
 		// TODO: output chan can get blocked??
@@ -171,31 +188,32 @@ func (mb *MicroBatcher[T, R]) Run() {
 
 	mb.input.Start()
 
-	// start MicroBatch algorithm
-	var ticker *time.Ticker = nil
-	if mb.config.Batch.Interval > 0 {
-		ticker = time.NewTicker(mb.config.Batch.Interval)
-		go func() {
-			for {
+	startPeriodicBatches := func(conf BatchOptions) {
+
+		var ticker *time.Ticker = nil
+		if mb.config.Batch.Interval > 0 {
+			fmt.Fprintf(os.Stdout, "starting with periodic time\n")
+			ticker = time.NewTicker(conf.Interval)
+		} else {
+			fmt.Fprintf(os.Stdout, "no batch time\n")
+		}
+		for {
+			select {
+			case <-ticker.C:
 				select {
-				case <-ticker.C:
-					//fmt.Fprintf(os.Stdout, "triggering batch\n")
-					select {
-					case mb.event.send <- true:
-						fmt.Fprintf(os.Stdout, "send event\n")
-					default:
-						fmt.Fprintf(os.Stdout, "send blocked\n")
-					}
+				case mb.event.send <- true:
+					fmt.Fprintf(os.Stdout, "send event\n")
+				default:
+					fmt.Fprintf(os.Stdout, "send skipped\n")
 				}
 			}
-		}()
-	} else {
-		fmt.Fprintf(os.Stdout, "no batch time\n")
+		}
 	}
 
+	go startPeriodicBatches(mb.config.Batch)
+
 	// Prepare a micro-batch
-	// TODO: split function into initBatcher
-	go func() {
+	processSendEvent := func() {
 		for {
 			select {
 			case <-mb.event.send:
@@ -208,7 +226,8 @@ func (mb *MicroBatcher[T, R]) Run() {
 				}
 			}
 		}
-	}()
+	}
+	go processSendEvent()
 
 	// output
 	// TODO: split function into initSender
@@ -217,7 +236,6 @@ func (mb *MicroBatcher[T, R]) Run() {
 			select {
 			case batch, ok := <-mb.output:
 				if ok {
-
 					fmt.Printf("batch contains %d items\n", len(batch))
 					res := (*(mb.BatchProcessor)).Process(batch)
 					for i := 0; i < len(res); i++ {
