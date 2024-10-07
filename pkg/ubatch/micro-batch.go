@@ -42,7 +42,7 @@ type MicroBatcher[T, R any] struct {
 
 type event struct{}
 
-// TODO: rename eventBus struct
+// TODO: rename eventBus structf
 type eventBus struct {
 	queue chan QueueEvent
 	send  chan any
@@ -81,7 +81,7 @@ func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	// TODO: could add a timeout
 }
 
-// UnWait is used to signal that a response is available
+// unWait is used to signal to the Submit method that the Result is available in the response map given Job Id
 func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	recv, ok := mb.event.recv.Load(id)
 	if ok {
@@ -97,21 +97,32 @@ type QueueEvent struct {
 }
 
 // Shutdown performs graceful shutdown
+// This involves:
+// * stopping the input receiver from receiving further jobs
+// * batching up the remaining items from the input queue
+// * sending these batches to the batch processor
+// *
 func (mb *MicroBatcher[T, R]) Shutdown() {
 	mb.input.Stop()
 	mb.input.WaitForPending()
-	aborted := mb.input.PrepareBatch()
-	// TODO: If we supported a gracefully shutdown option, we could send the final batch to the batch processor
-	//       This is a possible future feature. Instead, we just error them
+	outstanding := mb.input.PrepareBatch()
 
-	for _, job := range aborted {
-		r := Result[R]{
-			Id:  job.Id,
-			Err: ErrJobNotProcessed,
-		}
-		mb.addResult(r)
-	}
+	// TODO: if there is a batch size limit, then we may need multiple batches
+	// TODO: we could split it in the MicroBatcher or the InputReceiver
+	mb.submitBatch(outstanding)
 
+	// TODO: shutdown any goroutines in the MicroBatcher
+	// TODO: should Shutdown be a sync call (the same as InputReceiver.Stop()) ?
+
+	// TODO: we could also do a hard shutdown as follows
+	// aborted := mb.input.PrepareBatch()
+	//for _, job := range aborted {
+	//	r := Result[R]{
+	//		Id:  job.Id,
+	//		Err: ErrJobNotProcessed,
+	//	}
+	//	mb.addResult(r)
+	//}
 }
 
 func (mb *MicroBatcher[T, R]) addResult(result Result[R]) {
@@ -143,7 +154,7 @@ func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], log
 }
 
 // Run starts the batch processor executing its Algorithm to send micro-batches
-
+// TODO: Rename to Start
 func (mb *MicroBatcher[T, R]) Run() {
 
 	mb.input.Start()
@@ -179,15 +190,7 @@ func (mb *MicroBatcher[T, R]) Run() {
 			// TODO: add shutdown client channel signal
 			case batch, ok := <-mb.output:
 				if ok {
-					mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
-					res := (*(mb.BatchProcessor)).Process(batch)
-					for i := 0; i < len(res); i++ {
-						//id := res[i].Id
-						mb.addResult(res[i])
-						//mb.response[id] = res[i]
-						//mb.unWait(id)
-					}
-					// TODO call batch processor
+					mb.submitBatch(batch)
 				} else {
 					// TODO: log that the client has stopped
 					return
@@ -196,6 +199,17 @@ func (mb *MicroBatcher[T, R]) Run() {
 		}
 	}
 	go batchClientLoop()
+}
+
+// submitBatch sends a batch of Jobs to the BatchProcessor
+// When the BatchProcessor returns, the results are added to the response map and the associated Submit jobs are
+// notified that there is a result available via the recv channel for that Id.
+func (mb *MicroBatcher[T, R]) submitBatch(batch []Job[T]) {
+	mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
+	res := (*mb.BatchProcessor).Process(batch)
+	for i := 0; i < len(res); i++ {
+		mb.addResult(res[i])
+	}
 }
 
 // Submit adds a job to a micro batch and returns the result when it is available
@@ -213,7 +227,6 @@ func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 }
 
 // startPeriodicTrigger starts a goroutine which periodically sends a send event to a channel
-// func startPeriodicTrigger(conf BatchOptions, send chan<- any, log *slog.Logger) {
 func (mb *MicroBatcher[T, R]) startPeriodicTrigger() {
 	if mb.processes.periodicBatchLoop != STOPPED {
 		mb.log.Error("Cannot start PeriodicBatchLoop", "status", mb.processes.periodicBatchLoop)

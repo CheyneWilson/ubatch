@@ -4,17 +4,17 @@ import "time"
 
 // Config options for MicroBatcher
 type Config struct {
-	Batch BatchOptions
+	Batch BatchTriggerOptions
 	Input InputOptions
 }
 
-// BatchOptions are used to configure the algorithm of the MicroBatcher library
-type BatchOptions struct {
-	// TODO: remove ExactSize isn't part of the requirements, complicates batch processing unnecessarily
-	// ExactSize bool
-	// When greater than 0, trigger a micro-batch when the input queue reaches this Limit.
+// BatchTriggerOptions are used to configuring when MicroBatcher sends new to the BatchProcessor
+type BatchTriggerOptions struct {
+	// A new batch is prepared when the input queue length reaches the Batch Trigger Limit
+	// If this Limit is 0 or less, the trigger is disabled
 	Limit int
-	// When greater than 0, trigger a micro-batch periodically at this Interval.
+	// A new batch is prepared periodically at the Interval.
+	// If this Interval is 0 or less, the trigger is disabled
 	Interval time.Duration
 }
 
@@ -31,20 +31,16 @@ type ChannelOptions struct {
 
 // QueueOptions
 type QueueOptions struct {
-	// When Resize is true, the Queue will grow when it reaches capacity
-	Resize bool
 	// Size is the initial Capacity
 	Size int
 }
 
+// TODO: Revise DefaultConfig when we have more concrete use cases.
+//   Note, several different default could be provided if we have multiple common use cases.
+
 // DefaultConfig provides sensible defaults for the MicroBatcher.
-//
-// TODO: Revise these when we have concrete use cases.
-// TODO: Can split into multiple default options if we have multiple primary use cases.
 var DefaultConfig = Config{
-	Batch: BatchOptions{
-		// TODO: remove
-		//ExactSize: true,
+	Batch: BatchTriggerOptions{
 		Limit:    10,
 		Interval: 1 * time.Second,
 	},
@@ -53,7 +49,6 @@ var DefaultConfig = Config{
 			1,
 		},
 		QueueOptions{
-			true,
 			16,
 		},
 	},

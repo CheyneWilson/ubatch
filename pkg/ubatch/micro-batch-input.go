@@ -45,7 +45,8 @@ type InputReceiver[T any] struct {
 	log           *slog.Logger
 }
 
-// Submit a job to the InputReceiver
+// Submit a job to the InputReceiver.
+// This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) Submit(job Job[T]) error {
 	input.muAccept.RLock()
 	defer input.muAccept.RUnlock()

@@ -69,3 +69,4 @@ func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 }
 
 // TODO: test for duplicate IDs, need to add this functionality in
+// TODO: test for batch limits - add this functionality in
