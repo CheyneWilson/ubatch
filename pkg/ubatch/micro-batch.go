@@ -113,11 +113,6 @@ func (input *InputReceiver[T]) Start() {
 	}
 }
 
-// initInputReceiver creates a new Receiver
-//func (mb *MicroBatcher[T, _]) initInputReceiver() {
-//	mb.input = newInputReceiver[T](mb.config.Input)
-//}
-
 // Stop signals the InputQueue to stop accepting new jobs
 func (input *InputReceiver[T]) Stop() {
 	if input.running.Load() {

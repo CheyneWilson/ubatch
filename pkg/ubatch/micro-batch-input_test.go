@@ -230,6 +230,8 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 
 		}
 	}
-	// FIXME: address output queue bug this was ~approx 99979
 	assert.Equal(t, totalJobs, 100000)
 }
+
+// TODO: Test Start / Stop  behaviour
+//       (This can be done later, as core algorithm is more important)
