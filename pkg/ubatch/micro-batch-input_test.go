@@ -33,27 +33,27 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	inputReceiver.Start()
 
 	for i := 0; i < 100; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	assert.Equal(t, 100, len(*inputReceiver.queue))
 
 	for i := 0; i < 100; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	assert.Equal(t, 200, len(*inputReceiver.queue))
 
 	inputReceiver.Start()
 	for i := 0; i < 1000; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	assert.Equal(t, 1200, len(*inputReceiver.queue))
 
 	inputReceiver.Start()
 	for i := 0; i < 10000; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	assert.Equal(t, 11200, len(*inputReceiver.queue))
@@ -79,7 +79,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				inputReceiver.Submit(jobs.Feed())
+				_ = inputReceiver.Submit(jobs.Feed())
 			}
 		}()
 	}
@@ -109,7 +109,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	inputReceiver.Start()
 
 	for i := 0; i < 100; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	jobsBatch1 := inputReceiver.PrepareBatch()
@@ -122,7 +122,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.waitForPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
@@ -148,7 +148,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	var batches = make([][]types.Job[int], 0, 10)
 
 	for i := 0; i < 100; i++ {
-		inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Submit(jobs.Feed())
 		if i%10 == 0 {
 			b := inputReceiver.PrepareBatch()
 			batches = append(batches, b)
@@ -196,7 +196,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				inputReceiver.Submit(jobs.Feed())
+				_ = inputReceiver.Submit(jobs.Feed())
 				// Prepare a batch every 100 iterations, due to the concurrency of 100 goroutines, this will result
 				// in some janky batch sizes, both small and large
 				if i%100 == 0 {
@@ -237,17 +237,59 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	assert.Equal(t, totalJobs, 100000)
 }
 
-// TODO: Test Start / Stop  behaviour
-//       (This can be done later, as core algorithm is more important)
-
-func TestInputReceiver_nil_logger(t *testing.T) {
+func TestInputReceiver_nilLogger(t *testing.T) {
 	var conf = DefaultConfig.Input
 	var inputReceiver = NewInputReceiver[int](conf, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
-	inputReceiver.Submit(jobs.Feed())
+	_ = inputReceiver.Submit(jobs.Feed())
 	inputReceiver.waitForPending()
 	jobsBatch := inputReceiver.PrepareBatch()
 	assert.Equal(t, jobsBatch[0].Id, types.Id(1))
+}
 
+// TestInputReceiver_StopStart provides basic validation for the Stop/Start methods of the InputReceiver
+// It also tests the ErrJobRefused behaviour
+func TestInputReceiver_StopStart(t *testing.T) {
+	var conf = DefaultConfig.Input
+	var inputReceiver = NewInputReceiver[int](conf, nil)
+	jobs := feeder.NewSequentialJobFeeder()
+
+	// If the inputReceiver has not been started, it should refuse jobs
+	err := inputReceiver.Submit(jobs.Feed())
+	assert.Equal(t, ErrJobRefused, err)
+
+	inputReceiver.Start()
+	assert.Equal(t, STARTED, inputReceiver.control.state)
+
+	// Once started, jobs should be accepted without error
+	err = inputReceiver.Submit(jobs.Feed())
+	if err != nil {
+		t.Fatal("did not expect an error", err)
+	}
+
+	inputReceiver.Stop()
+	assert.Equal(t, STOPPED, inputReceiver.control.state)
+
+	// And when stopped it should error again
+	err = inputReceiver.Submit(jobs.Feed())
+	assert.Equal(t, ErrJobRefused, err)
+
+	// Start everything again to check the state transition
+	inputReceiver.Start()
+	assert.Equal(t, STARTED, inputReceiver.control.state)
+
+	// It should accept jobs once more
+	err = inputReceiver.Submit(jobs.Feed())
+	if err != nil {
+		t.Fatal("did not expect an error", err)
+	}
+
+	// And finally stop to check the last state transition
+	inputReceiver.Stop()
+	assert.Equal(t, STOPPED, inputReceiver.control.state)
+
+	// And when stopped it should once more
+	err = inputReceiver.Submit(jobs.Feed())
+	assert.Equal(t, ErrJobRefused, err)
 }
