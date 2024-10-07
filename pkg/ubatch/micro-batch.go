@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -68,7 +69,8 @@ type InputReceiver[T any] struct {
 	receiver chan Job[T]
 	// TODO: if we cannot drain 1 queue in the batch time, we will hit a problem
 	//       consider likelihood and mitigations
-	queue *[]Job[T]
+	muQueue sync.RWMutex
+	queue   *[]Job[T]
 }
 
 // Submit a job to the InputReceiver
@@ -97,7 +99,9 @@ func (input *InputReceiver[T]) Start() {
 					} else {
 						input.pending.Add(-1)
 						fmt.Fprintf(os.Stdout, "pending is %d\n", input.pending.Load())
+						input.muQueue.RLock()
 						*(input.queue) = append(*(input.queue), job)
+						input.muQueue.RUnlock()
 					}
 				}
 			}
@@ -126,14 +130,16 @@ func (input *InputReceiver[T]) Stop() {
 
 // PrepareBatch creates a batch with all items from the InputReceiver and resets it to an empty state
 func (input *InputReceiver[T]) PrepareBatch() []Job[T] {
+	// FIXME:  test / fix highWater
 	// Set the input queue capacity to the highest value seen
 	// There are other ways to sizing this, this approach minimizes resizing but will use more memory on average
-	//highWater := len(*(input.queue))
-	// FIXME:  test / fix highWater
 	highWater := cap(*(input.queue))
 	emtpy := make([]Job[T], 0, highWater)
+
+	input.muQueue.Lock()
 	batch := *input.queue
 	input.queue = &emtpy
+	input.muQueue.Unlock()
 
 	return batch
 }

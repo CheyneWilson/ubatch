@@ -184,6 +184,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	inputReceiver.Start()
 
 	var batches = make([][]types.Job[int], 0)
+	var batchMu = sync.Mutex{}
 
 	var wg sync.WaitGroup
 	for n := 0; n < 100; n++ {
@@ -196,7 +197,9 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 				// in some janky batch sizes, both small and large
 				if i%100 == 0 {
 					b := inputReceiver.PrepareBatch()
+					batchMu.Lock()
 					batches = append(batches, b)
+					batchMu.Unlock()
 				}
 			}
 		}()
@@ -211,7 +214,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	}
 
 	assert.Equal(t, 0, len(*inputReceiver.queue))
-	assert.Equal(t, 0, inputReceiver.pending.Load())
+	assert.Equal(t, 0, int(inputReceiver.pending.Load()))
 
 	// There should be 100,000 jobs with unique IDs
 	set := make(map[types.Id]bool)
