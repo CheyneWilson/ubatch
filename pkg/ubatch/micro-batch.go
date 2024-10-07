@@ -83,19 +83,10 @@ type QueueEvent struct {
 	Size int
 }
 
-// TODO: make internal
-type ControlState struct {
-	state            ProcessState
-	stateChange      chan ProcessState
-	waitUntilStopped chan bool
-	waitUntilStarted chan bool
-}
-
 // Shutdown performs graceful shutdown
 func (mb *MicroBatcher[T, _]) Shutdown() {
 	mb.input.Stop()
 
-	// TODO: close the input channel
 }
 
 func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {

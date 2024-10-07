@@ -14,19 +14,32 @@ var (
 	ErrJobRefused = errors.New("input receiver did not accept request")
 )
 
-// InputReceiver accepts jobs and queue them for the MicroBatch process
+// inputReceiverControl contains state of the InputReceiver and signal channels to coordinate processes & actions
+type inputReceiverControl struct {
+	// the state of the InputReceiver
+	state ProcessState
+	// state change signals
+	stateChange chan ProcessState
+	// signal channels
+	stopReceiveLoop  chan bool
+	waitUntilStopped chan bool
+	waitUntilStarted chan bool
+}
+
+// The InputReceiver supports multiple processes submitting Jobs simultaneously.
+// Jobs are transferred from the receiver channel to the queue.
 type InputReceiver[T any] struct {
 	accept   bool
 	muAccept sync.RWMutex
 	// The number of pending jobs submitted to the receiver which have not yet been queued
 	pending atomic.Int32
-	control ControlState
+	control inputReceiverControl
 
 	// The receiver buffers incoming Jobs before they are added to the queue
 	receiver chan Job[T]
-	muQueue  sync.RWMutex
 
-	queue *[]Job[T]
+	queue   *[]Job[T]
+	muQueue sync.RWMutex
 	// TODO: could add a threshold to reduce number of events sent
 	queueEventBus *chan<- QueueEvent
 	log           *slog.Logger
@@ -70,6 +83,7 @@ func (input *InputReceiver[T]) startControlLoop() {
 				for {
 					// Optimistically, pending should be '0' most of the time
 					if input.pending.Load() == 0 {
+						input.control.stopReceiveLoop <- true
 						input.updateState(STOPPED)
 						break
 					} else {
@@ -90,32 +104,36 @@ func (input *InputReceiver[T]) startControlLoop() {
 	}
 }
 
+func (input *InputReceiver[T]) startReceiveLoop() {
+	for {
+		select {
+		case <-input.control.stopReceiveLoop:
+			input.log.Info("Stopping Receive Loop")
+			return
+		case job := <-input.receiver:
+			input.log.Debug("Job received", "Id", job.Id)
+			input.pending.Add(-1)
+			input.log.Debug("Pending input", "PendingItems", input.pending.Load())
+			input.muQueue.RLock()
+			*(input.queue) = append(*(input.queue), job)
+			if input.queueEventBus != nil {
+				msg := QueueEvent{Size: len(*(input.queue))}
+				select {
+				case *input.queueEventBus <- msg:
+				default:
+					input.log.Debug("Skipped sending QueueEvent", "QueueSize", msg.Size)
+				}
+			}
+			input.muQueue.RUnlock()
+		}
+	}
+}
+
 // Start signals the InputReceiver can accept jobs and activates the input goroutine
 func (input *InputReceiver[T]) Start() {
 	if input.control.state == STOPPED {
 		go input.startControlLoop()
-
-		go func() {
-			for {
-				select {
-				case job := <-input.receiver:
-					input.log.Debug("Job received", "Id", job.Id)
-					input.pending.Add(-1)
-					input.log.Debug("Pending input", "PendingItems", input.pending.Load())
-					input.muQueue.RLock()
-					*(input.queue) = append(*(input.queue), job)
-					if input.queueEventBus != nil {
-						msg := QueueEvent{Size: len(*(input.queue))}
-						select {
-						case *input.queueEventBus <- msg:
-						default:
-							input.log.Debug("Skipped sending QueueEvent", "QueueSize", msg.Size)
-						}
-					}
-					input.muQueue.RUnlock()
-				}
-			}
-		}()
+		go input.startReceiveLoop()
 		<-input.control.waitUntilStarted
 	} else {
 		input.log.Error("InputReceiver is already running. Cannot start it twice.")
@@ -173,11 +191,31 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 		receiver: make(chan Job[T], opts.Channel.Size),
 		queue:    &queue,
 		log:      logger,
-		control: ControlState{
-			state:            STOPPED,
-			stateChange:      make(chan ProcessState, 1),
+		control: inputReceiverControl{
+			state:       STOPPED,
+			stateChange: make(chan ProcessState, 1),
+			// Signals
+			stopReceiveLoop:  make(chan bool, 1),
 			waitUntilStopped: make(chan bool, 1),
 			waitUntilStarted: make(chan bool, 1),
 		},
+	}
+}
+
+// The waitForPending was initially used for testing to ensure all submitted jobs arrived to the queue.
+// While this process should be very, very fast, this wait ensures there are no flakey out-by-one errors.
+
+// WaitForPending returns when where are no more items in pending in the receiver channel.
+// Calling Stop, WaitForPending, and PrepareBatch sequentially will ensure all inputted items are returned.
+// TODO: We could do a unit test for this by counting the success / Err response to ensure all the numbers add up and
+//
+//	that nothing goes missing
+func (input *InputReceiver[T]) WaitForPending() {
+	for {
+		if input.pending.Load() == 0 {
+			break
+		}
+		// the input
+		time.Sleep(1 * time.Millisecond)
 	}
 }

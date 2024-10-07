@@ -7,23 +7,9 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
-	"time"
 )
 
 var logger = slog.Default()
-
-// The InputReceiver supports multiple users submitting Jobs concurrently.
-// Jobs are transferred from the receiver channel to the queue.
-// The waitForPending method is used for testing to ensure all submitted jobs arrived to the queue.
-// While this process should be very, very fast, this wait ensures there are no flakey out-by-one errors.
-func (input *InputReceiver[T]) waitForPending() {
-	for {
-		if input.pending.Load() == 0 {
-			break
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-}
 
 // TestInputReceiver_SingleUser_Submit validates the job Submit process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
@@ -35,27 +21,27 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	assert.Equal(t, 100, len(*inputReceiver.queue))
 
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	assert.Equal(t, 200, len(*inputReceiver.queue))
 
 	inputReceiver.Start()
 	for i := 0; i < 1000; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	assert.Equal(t, 1200, len(*inputReceiver.queue))
 
 	inputReceiver.Start()
 	for i := 0; i < 10000; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	assert.Equal(t, 11200, len(*inputReceiver.queue))
 
 	// The queue should contain sequential jobs from 1 to 11200
@@ -84,7 +70,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 
 	assert.Equal(t, 100000, len(*inputReceiver.queue))
 
@@ -111,7 +97,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	jobsBatch1 := inputReceiver.PrepareBatch()
 	assert.Equal(t, len(*inputReceiver.queue), 0)
 	assert.Equal(t, len(jobsBatch1), 100)
@@ -124,7 +110,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
 	assert.Equal(t, len(*inputReceiver.queue), 0)
 	assert.Equal(t, len(jobsBatch2), 100)
@@ -154,7 +140,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 			batches = append(batches, b)
 		}
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	expectedBatchCount := 10
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
@@ -209,7 +195,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
 	// last of the pending items (it's only 1 because Submit is a synchronous call)
@@ -243,7 +229,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 	_ = inputReceiver.Submit(jobs.Feed())
-	inputReceiver.waitForPending()
+	inputReceiver.WaitForPending()
 	jobsBatch := inputReceiver.PrepareBatch()
 	assert.Equal(t, jobsBatch[0].Id, types.Id(1))
 }
