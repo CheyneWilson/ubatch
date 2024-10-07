@@ -61,7 +61,9 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 
 // InputReceiver accepts jobs and queue them for the MicroBatch process
 type InputReceiver[T any] struct {
-	accept   bool
+	accept bool
+	// The number of pending jobs submitted to the receiver which have not yet been queued
+	pending  atomic.Int32
 	running  atomic.Bool
 	receiver chan Job[T]
 	// TODO: if we cannot drain 1 queue in the batch time, we will hit a problem
@@ -69,10 +71,16 @@ type InputReceiver[T any] struct {
 	queue *[]Job[T]
 }
 
+// Submit a job to the InputReceiver
+func (input *InputReceiver[T]) Submit(job Job[T]) {
+	input.pending.Add(1)
+	fmt.Fprintf(os.Stdout, "pending in is %d\n", input.pending.Load())
+	input.receiver <- job
+}
+
 // Start signals the InputReceiver can accept jobs and activates the input goroutine
 func (input *InputReceiver[T]) Start() {
 	if input.running.CompareAndSwap(false, true) {
-
 		go func() {
 			defer input.running.Store(false)
 			input.accept = true
@@ -80,15 +88,17 @@ func (input *InputReceiver[T]) Start() {
 			for {
 				select {
 				case job, ok := <-input.receiver:
-					fmt.Fprintf(os.Stdout, "input recieved\n")
+					fmt.Fprintf(os.Stdout, "input recieved %d\n", job.Id)
 					if !ok {
 						// TODO: log we are shutting down input queue
+						// TODO: do we clear the pending?
 						fmt.Fprintf(os.Stdout, "input channel closed\n")
 						return
 					} else {
+						input.pending.Add(-1)
+						fmt.Fprintf(os.Stdout, "pending is %d\n", input.pending.Load())
 						*(input.queue) = append(*(input.queue), job)
 					}
-
 				}
 			}
 		}()
@@ -235,7 +245,7 @@ func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 	//	Id:   mb.id.Next(),
 	//	Data: data,
 	//}
-	mb.input.receiver <- job
+	mb.input.Submit(job)
 	return mb.wait(job.Id)
 
 	//} else {

@@ -6,7 +6,9 @@ package feeder
 // See https://docs.gatling.io/reference/script/core/session/feeders/ for more info
 
 import (
+	"cheyne.nz/ubatch/pkg/ubatch/types"
 	"slices"
+	"sync/atomic"
 )
 
 // Feeder provides data for a simulation
@@ -40,4 +42,21 @@ func (f *ArrayFeeder[T]) feed() T {
 		f.next = 0
 	}
 	return d
+}
+
+type SequentialJobFeeder[t types.Job[int]] struct {
+	n atomic.Int64
+}
+
+func NewSequentialJobFeeder() SequentialJobFeeder[types.Job[int]] {
+	return SequentialJobFeeder[types.Job[int]]{}
+}
+
+func (f *SequentialJobFeeder[T]) Feed() types.Job[int] {
+	i := f.n.Add(1)
+	job := types.Job[int]{
+		Id:   types.Id(i),
+		Data: int(i),
+	}
+	return job
 }
