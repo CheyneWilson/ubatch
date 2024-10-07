@@ -44,19 +44,23 @@ func (f *ArrayFeeder[T]) feed() T {
 	return d
 }
 
+// SequentialJobFeeder produces jobs with sequential IDs. The Job Data is int value of the ID.
 type SequentialJobFeeder[t types.Job[int]] struct {
-	n atomic.Int64
+	prev atomic.Int64
 }
 
-func NewSequentialJobFeeder() SequentialJobFeeder[types.Job[int]] {
-	return SequentialJobFeeder[types.Job[int]]{}
+func NewSequentialJobFeeder() *SequentialJobFeeder[types.Job[int]] {
+	feeder := SequentialJobFeeder[types.Job[int]]{}
+	feeder.prev.Swap(-1)
+	return &feeder
 }
 
+// Feed returns the next value in the sequence. Starts at 0 and increases by 1 for each call
 func (f *SequentialJobFeeder[T]) Feed() types.Job[int] {
-	i := f.n.Add(1)
+	n := f.prev.Add(1)
 	job := types.Job[int]{
-		Id:   types.Id(i),
-		Data: int(i),
+		Id:   types.Id(n),
+		Data: int(n),
 	}
 	return job
 }

@@ -3,9 +3,9 @@ package ubatch
 import (
 	. "cheyne.nz/ubatch/pkg/ubatch/types"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -26,7 +26,10 @@ type MicroBatcher[T, R any] struct {
 	config         Config
 	BatchProcessor *BatchProcessor[T, R]
 	input          InputReceiver[T]
-	response       map[Id]Result[R]
+
+	// TODO: would a sync.Map be better? We would want to measure the performance
+	response   map[Id]Result[R]
+	responseMu sync.Mutex
 
 	processes MicroBatchProcesses
 
@@ -54,20 +57,20 @@ func newEventBus() eventBus {
 }
 
 var (
-	ErrNoInput = errors.New("batch input stopped")
+	ErrNoInput         = errors.New("batch input stopped")
+	ErrJobNotProcessed = errors.New("job was not processed")
 )
 
 // Wait blocks until a response signal is sent
 func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	mb.event.recv[id] = make(chan any, 1)
-	//select {
-	//case <-mb.event.recv[id]:
 	<-mb.event.recv[id]
-
-	fmt.Println("response recv'd")
+	mb.log.Debug("Response received", "Id", id)
 	delete(mb.event.recv, id)
+	mb.responseMu.Lock()
 	res := mb.response[id]
 	delete(mb.response, id)
+	mb.responseMu.Unlock()
 	return res
 	// TODO: could add a timeout
 	//}
@@ -84,9 +87,28 @@ type QueueEvent struct {
 }
 
 // Shutdown performs graceful shutdown
-func (mb *MicroBatcher[T, _]) Shutdown() {
+func (mb *MicroBatcher[T, R]) Shutdown() {
 	mb.input.Stop()
+	mb.input.WaitForPending()
+	aborted := mb.input.PrepareBatch()
+	// TODO: If we supported a gracefully shutdown option, we could send the final batch to the batch processor
+	//       This is a possible future feature. Instead, we just error them
 
+	for _, job := range aborted {
+		r := Result[R]{
+			Id:  job.Id,
+			Err: ErrJobNotProcessed,
+		}
+		mb.addResult(r)
+	}
+
+}
+
+func (mb *MicroBatcher[T, R]) addResult(result Result[R]) {
+	mb.responseMu.Lock()
+	mb.response[result.Id] = result
+	mb.responseMu.Unlock()
+	mb.unWait(result.Id)
 }
 
 func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
@@ -116,7 +138,7 @@ func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], log
 func (mb *MicroBatcher[T, R]) Run() {
 
 	mb.input.Start()
-	mb.startPeriodicTrigger()
+	go mb.startPeriodicTrigger()
 	//go startPeriodicTrigger(mb.config.Batch, mb.event.send, mb.log)
 
 	// Prepare a micro-batch
@@ -151,9 +173,10 @@ func (mb *MicroBatcher[T, R]) Run() {
 					mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
 					res := (*(mb.BatchProcessor)).Process(batch)
 					for i := 0; i < len(res); i++ {
-						id := res[i].Id
-						mb.response[id] = res[i]
-						mb.unWait(id)
+						//id := res[i].Id
+						mb.addResult(res[i])
+						//mb.response[id] = res[i]
+						//mb.unWait(id)
 					}
 					// TODO call batch processor
 				} else {

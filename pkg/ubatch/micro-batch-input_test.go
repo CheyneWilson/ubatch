@@ -46,7 +46,7 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 
 	// The queue should contain sequential jobs from 1 to 11200
 	for i := 0; i < 11200; i++ {
-		expected := i + 1
+		expected := i
 		assert.Equal(t, (*inputReceiver.queue)[i].Data, expected)
 		assert.Equal(t, (*inputReceiver.queue)[i].Id, types.Id(expected))
 	}
@@ -103,8 +103,8 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	assert.Equal(t, len(jobsBatch1), 100)
 
 	for i := 0; i < 100; i++ {
-		assert.Equal(t, jobsBatch1[i].Data, i+1)
-		assert.Equal(t, jobsBatch1[i].Id, types.Id(i+1))
+		assert.Equal(t, jobsBatch1[i].Data, i)
+		assert.Equal(t, jobsBatch1[i].Id, types.Id(i))
 	}
 
 	for i := 0; i < 100; i++ {
@@ -115,7 +115,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	assert.Equal(t, len(*inputReceiver.queue), 0)
 	assert.Equal(t, len(jobsBatch2), 100)
 
-	const idOffset = 101
+	const idOffset = 100
 	for i := 0; i < 100; i++ {
 		assert.Equal(t, jobsBatch2[i].Data, i+idOffset)
 		assert.Equal(t, jobsBatch2[i].Id, types.Id(i+idOffset))
@@ -155,11 +155,10 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	i := 0
 	for _, batch := range batches {
 		for _, job := range batch {
-			i += 1
-			// fmt.Fprintf(os.Stdout, "Job Id is %d\n", job.Id)
 			if job.Id != types.Id(i) {
 				t.Fatalf("Missing Id '%d' from sequence", i)
 			}
+			i += 1
 		}
 	}
 
@@ -231,7 +230,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 	_ = inputReceiver.Submit(jobs.Feed())
 	inputReceiver.WaitForPending()
 	jobsBatch := inputReceiver.PrepareBatch()
-	assert.Equal(t, jobsBatch[0].Id, types.Id(1))
+	assert.Equal(t, jobsBatch[0].Id, types.Id(0))
 }
 
 // TestInputReceiver_StopStart provides basic validation for the Stop/Start methods of the InputReceiver
