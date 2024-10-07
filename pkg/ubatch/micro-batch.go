@@ -42,17 +42,18 @@ type MicroBatcher[T, R any] struct {
 
 type event struct{}
 
+// TODO: rename eventBus struct
 type eventBus struct {
 	queue chan QueueEvent
 	send  chan any
-	recv  map[Id]chan any
+	// recv comntains a mapping of Job/Result ID to a channel
+	recv sync.Map
 }
 
 func newEventBus() eventBus {
 	return eventBus{
 		queue: make(chan QueueEvent),
 		send:  make(chan any),
-		recv:  make(map[Id]chan any),
 	}
 }
 
@@ -63,22 +64,31 @@ var (
 
 // Wait blocks until a response signal is sent
 func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
-	mb.event.recv[id] = make(chan any, 1)
-	<-mb.event.recv[id]
-	mb.log.Debug("Response received", "Id", id)
-	delete(mb.event.recv, id)
+	mb.event.recv.Store(id, make(chan any, 1))
+	recv, ok := mb.event.recv.Load(id)
+	if ok {
+		<-recv.(chan any)
+		mb.log.Debug("Response received", "Id", id)
+		mb.event.recv.Delete(id)
+	} else {
+		mb.log.Error("could not load recv channel", "JobId", id)
+	}
 	mb.responseMu.Lock()
 	res := mb.response[id]
 	delete(mb.response, id)
 	mb.responseMu.Unlock()
 	return res
 	// TODO: could add a timeout
-	//}
 }
 
 // UnWait is used to signal that a response is available
 func (mb *MicroBatcher[_, _]) unWait(id Id) {
-	mb.event.recv[id] <- event{}
+	recv, ok := mb.event.recv.Load(id)
+	if ok {
+		recv.(chan any) <- event{}
+	} else {
+		mb.log.Error("could not load recv channel", "JobId", id)
+	}
 }
 
 // TODO: make internal
@@ -112,7 +122,6 @@ func (mb *MicroBatcher[T, R]) addResult(result Result[R]) {
 }
 
 func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
-
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
@@ -191,21 +200,16 @@ func (mb *MicroBatcher[T, R]) Run() {
 
 // Submit adds a job to a micro batch and returns the result when it is available
 func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
-	// FIXME: reenable the if accept?
-	//if mb.input.accept {
-	//job := Job[T]{
-	//	Id:   mb.id.Next(),
-	//	Data: data,
-	//}
-	mb.input.Submit(job)
-	return mb.wait(job.Id)
-
-	//} else {
-	//	// TODO: Log a warning, MicroBatcher receiver is not accepting requests, and status of config
-	//	return Result[R]{
-	//		Err: ErrNoInput,
-	//	}
-	//}
+	err := mb.input.Submit(job)
+	if err != nil {
+		// TODO: Log a warning, MicroBatcher receiver is not accepting requests, and status of config
+		return Result[R]{
+			Id:  job.Id,
+			Err: err,
+		}
+	} else {
+		return mb.wait(job.Id)
+	}
 }
 
 // startPeriodicTrigger starts a goroutine which periodically sends a send event to a channel
