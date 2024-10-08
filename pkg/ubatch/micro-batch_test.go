@@ -109,7 +109,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
-	conf.Input.Queue.Threshold = 5
+	conf.Batch.Threshold = 5
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
@@ -167,6 +167,4 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 }
 
 // TODO: test for duplicate IDs, need to add this functionality in
-// TODO: test for batch limits - add this functionality in
-
 // TODO: allow the trigger config to be changed/updated (put this in future scope)

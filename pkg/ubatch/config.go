@@ -2,8 +2,8 @@ package ubatch
 
 import "time"
 
-// Config options for MicroBatcher
-type Config struct {
+// UConfig options for MicroBatcher
+type UConfig struct {
 	Batch BatchTriggerOptions
 	Input InputOptions
 }
@@ -12,7 +12,7 @@ type Config struct {
 type BatchTriggerOptions struct {
 	// When the input queue length reaches the Threshold, a new micro-batch is created.
 	// If this Threshold is 0 or less, the trigger is disabled.
-	// Threshold int
+	Threshold int
 
 	// A new micro-batch is created periodically at the specified Interval.
 	// If queue length is 0 at the time of triggering then no batch is sent (it would be empty).
@@ -26,28 +26,39 @@ type InputOptions struct {
 	Queue   QueueOptions
 }
 
+// IRInputOptions are used for directly configuring an InputReceiver
+type IRInputOptions struct {
+	Channel ChannelOptions
+	Queue   IRQueueOptions
+}
+
 type ChannelOptions struct {
 	// Size is the BufferSize of the channel
 	Size int
 }
 
-// QueueOptions
-type QueueOptions struct {
+// IRQueueOptions are used for directly configuring an InputReceiver
+type IRQueueOptions struct {
 	// Size is the initial Capacity
 	Size int
 	// If Threshold is greater than 0, trigger a QueueThresholdEvent when the queue length reaches the Threshold
 	Threshold int
 }
 
+// QueueOptions are partially InputReceiver queue.
+type QueueOptions struct {
+	// Size is the initial Capacity
+	Size int
+}
+
 // TODO: Revise DefaultConfig when we have more concrete use cases.
-//   Note, several different default could be provided if we have multiple common use cases.
+//   Note, if we have multiple common use cases then several different defaults Configs could be provided.
 
 // DefaultConfig provides sensible defaults for the MicroBatcher.
-var DefaultConfig = Config{
+var DefaultConfig = UConfig{
 	Batch: BatchTriggerOptions{
-		// TODO: duplicate setting - create a special QueueOptions for this config, restore Threshold below
-		//Threshold: 10,
-		Interval: 1 * time.Second,
+		Threshold: 0,
+		Interval:  1 * time.Second,
 	},
 	Input: InputOptions{
 		ChannelOptions{
@@ -55,8 +66,17 @@ var DefaultConfig = Config{
 		},
 		QueueOptions{
 			Size: 16,
-			// TODO: remove Threshold - see note in BatchTriggerOptions above
-			Threshold: 0,
 		},
 	},
+}
+
+// irInputOptions produces the config for an InputReceiver from the micro-batch config.
+func (conf *UConfig) irInputOptions() IRInputOptions {
+	return IRInputOptions{
+		Channel: conf.Input.Channel,
+		Queue: IRQueueOptions{
+			Size:      conf.Input.Queue.Size,
+			Threshold: conf.Batch.Threshold,
+		},
+	}
 }

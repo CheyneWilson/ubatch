@@ -18,7 +18,7 @@ type uProcesses struct {
 }
 
 type MicroBatcher[T, R any] struct {
-	config         Config
+	config         UConfig
 	BatchProcessor *BatchProcessor[T, R]
 	input          InputReceiver[T]
 
@@ -109,17 +109,18 @@ func (mb *MicroBatcher[_, R]) addResult(result Result[R]) {
 	mb.unWait(result.Id)
 }
 
-func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
+func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
 		logger = slog.New(handler)
 	}
+	irConfig := conf.irInputOptions()
 
 	return MicroBatcher[T, R]{
 		config:         conf,
 		BatchProcessor: processor,
-		input:          NewInputReceiver[T](conf.Input, logger),
+		input:          NewInputReceiver[T](irConfig, logger),
 
 		control: uProcesses{
 			periodic:  newUProcess(),

@@ -179,7 +179,7 @@ func (input *InputReceiver[T]) PrepareBatch() []Job[T] {
 // NewInputReceiver creates a new InputReceiver
 //
 // logger - optional
-func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiver[T] {
+func NewInputReceiver[T any](opts IRInputOptions, logger *slog.Logger) InputReceiver[T] {
 	queue := make([]Job[T], 0, opts.Queue.Size)
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005

@@ -23,7 +23,7 @@ var logger = configureLogger()
 
 // TestInputReceiver_SingleUser_Submit tests the job Submit method and receive process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -64,7 +64,7 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 
 // TestInputReceiver_MultiUser_Submit tests the job Submit method and receive process for multiple concurrent consumers
 func TestInputReceiver_MultiUser_Submit(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -99,7 +99,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 
 // TestInputReceiver_SingleUser_PrepareBatch
 func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -136,7 +136,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 // concurrently. It is semi-deterministic test, all batched jobs will appear in order, but the size of each
 // batch could vary depending on the contents of the queue when PrepareBatch triggers
 func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -177,7 +177,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 
 // TestInputReceiver_MultiUser_Concurrent_PrepareBatch verifies that
 func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -233,7 +233,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 }
 
 func TestInputReceiver_nilLogger(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
@@ -246,7 +246,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 // TestInputReceiver_StopStart provides basic validation for the Stop/Start methods of the InputReceiver
 // It also tests the ErrJobRefused behaviour
 func TestInputReceiver_StopStart(t *testing.T) {
-	var conf = DefaultConfig.Input
+	var conf = DefaultConfig.irInputOptions()
 	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 
