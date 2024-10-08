@@ -16,11 +16,9 @@ var (
 // inputReceiverControl contains state of the InputReceiver and signal channels to coordinate processes & actions
 type inputReceiverControl struct {
 	// the state of the InputReceiver
-	state ProcessState
-	// state change signals
-	stateChange chan ProcessState
+	receive uProcess
+
 	// signal channels
-	stopReceiveLoop  chan bool
 	waitUntilStopped chan bool
 	waitUntilStarted chan bool
 }
@@ -30,10 +28,11 @@ type QueueThresholdEvent struct{}
 // The InputReceiver supports multiple processes submitting Jobs simultaneously.
 // Jobs are transferred from the receiver channel to the queue.
 type InputReceiver[T any] struct {
+	// if accept is false, any jobs submitted are rejected with a ErrJobRefused
 	accept   bool
 	muAccept sync.RWMutex
-	// The number of pending jobs submitted to the receiver which have not yet been queued
 
+	// pending is the number of incoming Jobs which have not yet processed by receiver
 	pending   int
 	muPending sync.RWMutex
 
@@ -77,7 +76,7 @@ func (input *InputReceiver[T]) startControlLoop() {
 	input.updateState(STARTING)
 	for {
 		select {
-		case s := <-input.control.stateChange:
+		case s := <-input.control.receive.change:
 			if s == STARTING {
 				input.log.Info("Input receiver starting.")
 				input.accept = true
@@ -94,7 +93,7 @@ func (input *InputReceiver[T]) startControlLoop() {
 					p := input.pending
 					input.muPending.RUnlock()
 					if p == 0 {
-						input.control.stopReceiveLoop <- true
+						input.control.receive.stop <- true
 						input.updateState(STOPPED)
 						break
 					} else {
@@ -118,7 +117,7 @@ func (input *InputReceiver[T]) startControlLoop() {
 func (input *InputReceiver[T]) startReceiveLoop() {
 	for {
 		select {
-		case <-input.control.stopReceiveLoop:
+		case <-input.control.receive.stop:
 			input.log.Info("Stopping Receive Loop")
 			return
 		case job := <-input.receiver:
@@ -148,7 +147,7 @@ func (input *InputReceiver[T]) startReceiveLoop() {
 
 // Start signals the InputReceiver can accept jobs and activates the input goroutine
 func (input *InputReceiver[T]) Start() {
-	if input.control.state == STOPPED {
+	if input.control.receive.state == STOPPED {
 		go input.startControlLoop()
 		go input.startReceiveLoop()
 		<-input.control.waitUntilStarted
@@ -159,19 +158,19 @@ func (input *InputReceiver[T]) Start() {
 
 // updateState is a helper function to ensure consistent state transition
 func (input *InputReceiver[T]) updateState(state ProcessState) {
-	input.log.Debug("State change", "from", input.control.state, "to", state)
-	input.control.state = state
-	input.control.stateChange <- state
+	input.log.Debug("State change", "from", input.control.receive.state, "to", state)
+	input.control.receive.state = state
+	input.control.receive.change <- state
 }
 
 // Stop signals the InputQueue to stop accepting new jobs
 func (input *InputReceiver[T]) Stop() {
-	if input.control.state == STARTED {
+	if input.control.receive.state == STARTED {
 		input.log.Info("Stopping InputReceiver.")
 		input.updateState(STOPPING)
 		<-input.control.waitUntilStopped
 	} else {
-		input.log.Error("Cannot stop InputReceiver", "State", input.control.state)
+		input.log.Error("Cannot stop InputReceiver", "State", input.control.receive.state)
 	}
 }
 
@@ -209,10 +208,13 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 		queue:    &queue,
 		log:      logger,
 		control: inputReceiverControl{
-			state:       STOPPED,
-			stateChange: make(chan ProcessState, 1),
+			receive: uProcess{
+				state:  STOPPED,
+				change: make(chan ProcessState, 1),
+				stop:   make(chan bool, 1),
+			},
+
 			// Signals
-			stopReceiveLoop:  make(chan bool, 1),
 			waitUntilStopped: make(chan bool, 1),
 			waitUntilStarted: make(chan bool, 1),
 		},
@@ -222,7 +224,7 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 }
 
 // The waitForPending was initially used for testing to ensure all submitted jobs arrived to the queue.
-// While this process should be very, very fast, this wait ensures there are no flakey out-by-one errors.
+// While this receive should be very, very fast, this wait ensures there are no flakey out-by-one errors.
 
 // WaitForPending returns when where are no more items in pending in the receiver channel.
 // Calling Stop, WaitForPending, and PrepareBatch sequentially will ensure all inputted items are returned.

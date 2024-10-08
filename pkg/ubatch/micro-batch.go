@@ -18,10 +18,10 @@ const (
 	STOPPING ProcessState = iota
 )
 
-// TODO: Also use uProcess in InputReceiver
 type uProcess struct {
-	state ProcessState
-	stop  chan bool
+	state  ProcessState
+	stop   chan bool
+	change chan ProcessState
 }
 
 type MicroBatchProcesses struct {

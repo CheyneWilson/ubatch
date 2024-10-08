@@ -21,7 +21,7 @@ func configureLogger() *slog.Logger {
 
 var logger = configureLogger()
 
-// TestInputReceiver_SingleUser_Submit validates the job Submit process for a single consumer
+// TestInputReceiver_SingleUser_Submit tests the job Submit method and receive process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	var conf = DefaultConfig.Input
 	var inputReceiver = NewInputReceiver[int](conf, logger)
@@ -62,7 +62,7 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	}
 }
 
-// TestInputReceiver_MultiUser_Submit validates the job Submit process for multiple concurrent consumers
+// TestInputReceiver_MultiUser_Submit tests the job Submit method and receive process for multiple concurrent consumers
 func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 	var conf = DefaultConfig.Input
 	var inputReceiver = NewInputReceiver[int](conf, logger)
@@ -255,7 +255,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	assert.Equal(t, ErrJobRefused, err)
 
 	inputReceiver.Start()
-	assert.Equal(t, STARTED, inputReceiver.control.state)
+	assert.Equal(t, STARTED, inputReceiver.control.receive.state)
 
 	// Once started, jobs should be accepted without error
 	err = inputReceiver.Submit(jobs.Feed())
@@ -264,7 +264,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	}
 
 	inputReceiver.Stop()
-	assert.Equal(t, STOPPED, inputReceiver.control.state)
+	assert.Equal(t, STOPPED, inputReceiver.control.receive.state)
 
 	// And when stopped it should error again
 	err = inputReceiver.Submit(jobs.Feed())
@@ -272,7 +272,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 
 	// Start everything again to check the state transition
 	inputReceiver.Start()
-	assert.Equal(t, STARTED, inputReceiver.control.state)
+	assert.Equal(t, STARTED, inputReceiver.control.receive.state)
 
 	// It should accept jobs once more
 	err = inputReceiver.Submit(jobs.Feed())
@@ -282,7 +282,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 
 	// And finally stop to check the last state transition
 	inputReceiver.Stop()
-	assert.Equal(t, STOPPED, inputReceiver.control.state)
+	assert.Equal(t, STOPPED, inputReceiver.control.receive.state)
 
 	// And when stopped it should once more
 	err = inputReceiver.Submit(jobs.Feed())
