@@ -2,7 +2,6 @@ package ubatch
 
 import (
 	. "cheyne.nz/ubatch/pkg/ubatch/types"
-	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -19,17 +18,76 @@ const (
 )
 
 type uProcess struct {
-	state  ProcessState
-	stop   chan bool
-	change chan ProcessState
+	state   ProcessState
+	stopped chan uEvent
+	started chan uEvent
+	change  chan ProcessState
 }
 
-type MicroBatchProcesses struct {
+type uEvent struct{}
+
+func newUProcess() uProcess {
+	return uProcess{
+		state:   STOPPED,
+		stopped: make(chan uEvent, 1),
+		started: make(chan uEvent, 1),
+		change:  make(chan ProcessState, 1),
+	}
+}
+
+// Reset clear any previous stopped/started signals
+func (up *uProcess) Reset() {
+	// This protects against a double-stopped bug.
+	// E.g. the actions Start, Stop, Stop, Start would cause the process eventLoop to Stop
+	select {
+	case <-up.stopped:
+	default:
+	}
+	select {
+	case <-up.started:
+	default:
+	}
+}
+
+func (up *uProcess) resetAndMarkStarting() {
+	up.Reset()
+	up.state = STARTING
+	up.change <- STARTING
+}
+
+func (up *uProcess) markStarted() {
+	up.state = STARTED
+	up.change <- STARTED
+	up.started <- uEvent{}
+}
+
+// Stop signals the stopped procedure should be run for this process
+// It returns once the process has stopped
+func (up *uProcess) Stop() {
+	up.state = STOPPING
+	up.change <- STOPPING
+}
+
+// StopIfStarted conditionally calls the Stop() method if this process is STARTED
+func (up *uProcess) StopIfStarted() {
+	if up.state == STARTED {
+		up.Stop()
+	}
+}
+
+// markStopped changes the state to STOPPED and triggers a stopped event
+func (up *uProcess) markStopped() {
+	up.state = STOPPED
+	// We don't send a change event because the event loop has been stopped
+	// e.g. don't do this ;p  up.change <- STOPPED
+	up.stopped <- uEvent{}
+}
+
+type uProcesses struct {
 	periodic  uProcess
 	threshold uProcess
 	prepare   uProcess
 	send      uProcess
-	batchRevc uProcess
 }
 
 type MicroBatcher[T, R any] struct {
@@ -41,16 +99,13 @@ type MicroBatcher[T, R any] struct {
 	response   map[Id]Result[R]
 	responseMu sync.Mutex
 
-	batchProcesses MicroBatchProcesses
+	control uProcesses
 
-	// TODO: include in client?
 	output chan []Job[T]
 	event  eventChannels
 
 	log *slog.Logger
 }
-
-type event struct{}
 
 type eventChannels struct {
 	// TODO: Change sent event type to a union of known send types?
@@ -58,11 +113,6 @@ type eventChannels struct {
 	// recv contains a mapping from Job.Id to a unique channel
 	recv sync.Map
 }
-
-var (
-	ErrNoInput         = errors.New("batch input stopped")
-	ErrJobNotProcessed = errors.New("job was not processed")
-)
 
 // Wait blocks until a response signal is sent
 func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
@@ -83,11 +133,11 @@ func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	// TODO: could add a timeout
 }
 
-// unWait is used to signal to the Submit method that the Result is available in the response map given Job Id
+// unWait is used to signal to the Submit method that the Result is available in the response map given Job ID
 func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	recv, ok := mb.event.recv.Load(id)
 	if ok {
-		recv.(chan any) <- event{}
+		recv.(chan any) <- uEvent{}
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
 	}
@@ -98,30 +148,31 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 // * stopping the input receiver from receiving further jobs
 // * batching up the remaining items from the input queue
 // * sending these batches to the batch processor
-// *
 func (mb *MicroBatcher[T, R]) Shutdown() {
 	mb.input.Stop()
 	mb.input.WaitForPending()
-	outstanding := mb.input.PrepareBatch()
 
 	// TODO: if there is a batch size limit, then we may need multiple batches
 	// TODO: we could split it in the MicroBatcher or the InputReceiver
-	mb.submitBatch(outstanding)
+	outstanding := mb.input.PrepareBatch()
 
-	// TODO: add shutdown sequence
+	// input.queue should be 0 following PrepareBatch, these event loops can be safely stopped
+	// TODO: could add additional guards / checks /tests around process handling
+	// If the Interval / Threshold were not set in the config, the periodic and threshold processes won't have been started
+	mb.control.periodic.StopIfStarted()
+	mb.control.threshold.StopIfStarted()
+	mb.control.prepare.Stop()
 
-	// TODO: shutdown any goroutines in the MicroBatcher
-	// TODO: should Shutdown be a sync call (the same as InputReceiver.Stop()) ?
+	// call sendBatch directly bypasses the event loops
+	// if the batchProcessor is not thread-safe then this would be a problem
+	// TODO: consider how best to coordinate out output channel
+	mb.output <- outstanding
 
-	// TODO: we could also do a hard shutdown as follows
-	// aborted := mb.input.PrepareBatch()
-	//for _, job := range aborted {
-	//	r := Result[R]{
-	//		Id:  job.Id,
-	//		Err: ErrJobNotProcessed,
-	//	}
-	//	mb.addResult(r)
-	//}
+	// FIXME: there could possibly be a rare race condition
+	// consider how best to coordinate the shutdown of the prepare and send event loops
+	// mb.processes.send.Stop()
+	// TODO: wait until all receive before
+
 }
 
 func (mb *MicroBatcher[T, R]) addResult(result Result[R]) {
@@ -142,11 +193,21 @@ func NewMicroBatcher[T, R any](conf Config, processor *BatchProcessor[T, R], log
 		config:         conf,
 		BatchProcessor: processor,
 		input:          NewInputReceiver[T](conf.Input, logger),
+
+		control: uProcesses{
+			periodic:  newUProcess(),
+			threshold: newUProcess(),
+			prepare:   newUProcess(),
+			send:      newUProcess(),
+		},
+
 		event: eventChannels{
 			send: make(chan any),
 		},
+		// the response channel handles the results returned from the BatchProcessor
 		response: make(map[Id]Result[R]),
-		// TODO: output chan can get blocked??
+
+		// the output channel buffers the jobs being sent to the BatchProcessor
 		output: make(chan []Job[T], 1),
 		log:    logger,
 	}
@@ -162,10 +223,10 @@ func (mb *MicroBatcher[_, _]) Start() {
 
 }
 
-// submitBatch sends a batch of Jobs to the BatchProcessor
+// sendBatch sends a batch of Jobs to the BatchProcessor
 // When the BatchProcessor returns, the results are added to the response map and the associated Submit jobs are
 // notified that there is a result available via the recv channel for that ID.
-func (mb *MicroBatcher[T, _]) submitBatch(batch []Job[T]) {
+func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 	mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
 	res := (*mb.BatchProcessor).Process(batch)
 	for i := 0; i < len(res); i++ {
@@ -188,38 +249,37 @@ func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 
 // startPeriodicBatchLoop starts a goroutine which periodically sends a send event to a channel
 func (mb *MicroBatcher[_, _]) startPeriodicBatchLoop() {
+	periodicTriggerProc := &mb.control.periodic
 
-	if state := mb.batchProcesses.periodic.state; state != STOPPED {
-		mb.log.Error("Cannot start PeriodicBatchLoop", "state", state)
-		return
-	}
-	mb.batchProcesses.periodic.state = STARTING
-
-	var ticker *time.Ticker = nil
-	if mb.config.Batch.Interval > 0 {
-		// TODO: can we pretty-print conf.Interval to appropriate units?
-		mb.log.Info("Starting periodic micro-batch timer.", "BatchInterval", mb.config.Batch.Interval)
-		ticker = time.NewTicker(mb.config.Batch.Interval)
-	} else {
-		mb.log.Info("Periodic interval not set. Stopping PeriodicBatchLoop.")
-		mb.batchProcesses.periodic.state = STOPPED
+	if state := periodicTriggerProc.state; state != STOPPED {
+		mb.log.Error("Cannot started PeriodicBatchLoop", "state", state)
 		return
 	}
 
-	// Clear any previous stop signals
-	// This protects against a double-stop bug. E.g. the actions Start, Stop, Stop, Start would cause it not to start
-	select {
-	case <-mb.batchProcesses.periodic.stop:
-	default:
+	if mb.config.Batch.Interval <= 0 {
+		mb.log.Info("Periodic Interval not set. Periodic Batch Loop will not be started.")
+		return
 	}
+	// TODO: can we pretty-print the Batch Interval with appropriate Human Readable units?
+	mb.log.Info("Periodic Batch Loop Timer.", "BatchInterval", mb.config.Batch.Interval)
+	ticker := time.NewTicker(mb.config.Batch.Interval)
 
-	mb.batchProcesses.periodic.state = STARTED
+	periodicTriggerProc.resetAndMarkStarting()
 	for {
 		select {
-		case <-mb.batchProcesses.periodic.stop:
-			mb.batchProcesses.periodic.state = STOPPED
-			mb.log.Info("Periodic Batch Loop Stopped")
-			return
+		case s := <-periodicTriggerProc.change:
+			switch s {
+			case STOPPED:
+				mb.log.Info("Periodic Batch Loop Stopped")
+				return
+			case STARTING:
+				periodicTriggerProc.markStarted()
+			case STARTED:
+				mb.log.Info("Periodic Batch Loop Started")
+			case STOPPING:
+				mb.log.Debug("Periodic Batch Loop Stopping")
+				periodicTriggerProc.markStopped()
+			}
 		case <-ticker.C:
 			select {
 			case mb.event.send <- true:
@@ -232,30 +292,32 @@ func (mb *MicroBatcher[_, _]) startPeriodicBatchLoop() {
 }
 
 func (mb *MicroBatcher[_, _]) startQueueThresholdEventLoop() {
-	if state := mb.batchProcesses.threshold.state; state != STOPPED {
-		mb.log.Error("Cannot start MicroBatch Threshold Process", "state", state)
+	if state := mb.control.threshold.state; state != STOPPED {
+		mb.log.Error("Cannot started Threshold Event Loop", "state", state)
 		return
 	}
-	if mb.input.queueThreshold > 0 {
-		mb.batchProcesses.threshold.state = STARTING
-		// Clear any previous stop signals
-		// This protects against a double-stop bug. E.g. the actions Start, Stop, Stop, Start would cause it not to start
-		select {
-		case <-mb.batchProcesses.threshold.stop:
-		default:
-		}
-	} else {
-		mb.log.Info("Queue Threshold not set. MicroBatch Threshold Process will not be started.")
+	if mb.input.queueThreshold <= 0 {
+		mb.log.Info("Queue Threshold not set. Threshold Event Loop will not be started.")
 		return
 	}
 
-	mb.batchProcesses.threshold.state = STARTED
+	thresholdProc := &mb.control.threshold
+	thresholdProc.resetAndMarkStarting()
 	for {
 		select {
-		case <-mb.batchProcesses.threshold.stop:
-			mb.batchProcesses.threshold.state = STOPPED
-			mb.log.Info("MicroBatch Threshold Process Stopped")
-			return
+		case s := <-thresholdProc.change:
+			switch s {
+			case STOPPED:
+				mb.log.Info("Threshold Event Loop Stopped")
+				return
+			case STARTING:
+				thresholdProc.markStarted()
+			case STARTED:
+				mb.log.Info("Threshold Event Loop Started")
+			case STOPPING:
+				mb.log.Debug("Threshold Event Loop Stopping")
+				thresholdProc.markStopped()
+			}
 		case <-mb.input.queueThresholdEvent:
 			select {
 			case mb.event.send <- true:
@@ -267,23 +329,28 @@ func (mb *MicroBatcher[_, _]) startQueueThresholdEventLoop() {
 	}
 }
 
-func (mb *MicroBatcher[T, R]) stopPeriodicTrigger() {
-	mb.batchProcesses.periodic.stop <- true
-}
-
 func (mb *MicroBatcher[_, _]) startPrepareBatchEventLoop() {
-	mb.batchProcesses.prepare.state = STARTED
+	procBatchProc := &mb.control.prepare
+	procBatchProc.resetAndMarkStarting()
 	for {
 		select {
-		case <-mb.batchProcesses.prepare.stop:
-			mb.batchProcesses.prepare.state = STOPPED
-			mb.log.Info("MicroBatch Prepare Batch Process Stopped")
-			return
+		case s := <-procBatchProc.change:
+			switch s {
+			case STOPPED:
+				mb.log.Info("Prepare Batch Event Loop Stopped")
+				return
+			case STARTING:
+				procBatchProc.markStarted()
+			case STARTED:
+				mb.log.Info("Prepare Batch Event Loop Started")
+			case STOPPING:
+				mb.log.Debug("Prepare Batch Event Loop Stopping")
+				procBatchProc.markStopped()
+			}
 		case <-mb.event.send:
 			batch := mb.input.PrepareBatch()
 			if len(batch) > 0 {
-				// FIXME: change this message
-				mb.log.Debug("Sending to Batch processor")
+				mb.log.Debug("Sending to Batch Processor Client")
 
 				// TODO: if the output channel backs because of a slow BatchProcessor
 				//       this causes backpressure causing the PrepareBatchEventLoop to stall
@@ -299,14 +366,25 @@ func (mb *MicroBatcher[_, _]) startPrepareBatchEventLoop() {
 }
 
 func (mb *MicroBatcher[_, _]) startBatchProcessorClientLoop() {
+	sendProc := &mb.control.send
+	sendProc.resetAndMarkStarting()
 	for {
 		select {
-		case <-mb.batchProcesses.send.stop:
-			mb.batchProcesses.send.state = STOPPED
-			mb.log.Info("MicroBatch Send Process Stopped")
-			return
+		case s := <-sendProc.change:
+			switch s {
+			case STOPPED:
+				mb.log.Info("Send Event Loop Stopped")
+				return
+			case STARTING:
+				sendProc.markStarted()
+			case STARTED:
+				mb.log.Info("Send Event Loop Started")
+			case STOPPING:
+				mb.log.Debug("Send Event Loop Stopping")
+				sendProc.markStopped()
+			}
 		case batch := <-mb.output:
-			mb.submitBatch(batch)
+			mb.sendBatch(batch)
 		}
 	}
 }

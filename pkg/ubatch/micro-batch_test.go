@@ -104,15 +104,12 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 }
 
 // TestMicroBatcher_SingleUser_Threshold tests that  a micro-batch is sent when the input queue Threshold is reached.
-// TODO: This is expected to fail - limit not yet impl
 func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int, int](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
 	conf.Input.Queue.Threshold = 5
-
-	// lvl.Set(slog.LevelDebug)
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
@@ -131,7 +128,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 				assert.Nil(t, r.Err)
 			}()
 		}
-		// Note, we can't call wg.Wait() here, because each goroutine will be waiting on it's Submit method call to complete
+		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Submit method call to complete
 
 		t.Log("Waiting for 5 seconds")
 		select {
@@ -145,7 +142,6 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 
 		// Submitting the 5th job causes the input Threshold to be reached, triggering a new micro-batch
 		// All outstanding jobs should complete
-
 		t.Log("This job should trigger a new micro-batch")
 
 		completed := make(chan bool, 1)

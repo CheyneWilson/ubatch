@@ -12,7 +12,7 @@ import (
 
 func configureLogger() *slog.Logger {
 	opts := &slog.HandlerOptions{
-		// Note: Debug logging can be enabled by simply uncommenting the below linke
+		// Note: Debug logging can be enabled by simply uncommenting the below line
 		// Level: slog.LevelDebug,
 	}
 	handler := slog.NewTextHandler(os.Stdout, opts)
@@ -247,7 +247,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 // It also tests the ErrJobRefused behaviour
 func TestInputReceiver_StopStart(t *testing.T) {
 	var conf = DefaultConfig.Input
-	var inputReceiver = NewInputReceiver[int](conf, nil)
+	var inputReceiver = NewInputReceiver[int](conf, logger)
 	jobs := feeder.NewSequentialJobFeeder()
 
 	// If the inputReceiver has not been started, it should refuse jobs
@@ -255,6 +255,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	assert.Equal(t, ErrJobRefused, err)
 
 	inputReceiver.Start()
+	assert.Equal(t, STARTED, inputReceiver.control.state)
 	assert.Equal(t, STARTED, inputReceiver.control.receive.state)
 
 	// Once started, jobs should be accepted without error
@@ -264,6 +265,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	}
 
 	inputReceiver.Stop()
+	assert.Equal(t, STOPPED, inputReceiver.control.state)
 	assert.Equal(t, STOPPED, inputReceiver.control.receive.state)
 
 	// And when stopped it should error again
@@ -272,6 +274,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 
 	// Start everything again to check the state transition
 	inputReceiver.Start()
+	assert.Equal(t, STARTED, inputReceiver.control.state)
 	assert.Equal(t, STARTED, inputReceiver.control.receive.state)
 
 	// It should accept jobs once more
@@ -280,8 +283,9 @@ func TestInputReceiver_StopStart(t *testing.T) {
 		t.Fatal("did not expect an error", err)
 	}
 
-	// And finally stop to check the last state transition
+	// And finally stopped to check the last state transition
 	inputReceiver.Stop()
+	assert.Equal(t, STOPPED, inputReceiver.control.state)
 	assert.Equal(t, STOPPED, inputReceiver.control.receive.state)
 
 	// And when stopped it should once more

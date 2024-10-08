@@ -16,11 +16,8 @@ var (
 // inputReceiverControl contains state of the InputReceiver and signal channels to coordinate processes & actions
 type inputReceiverControl struct {
 	// the state of the InputReceiver
+	state   ProcessState
 	receive uProcess
-
-	// signal channels
-	waitUntilStopped chan bool
-	waitUntilStarted chan bool
 }
 
 type QueueThresholdEvent struct{}
@@ -70,56 +67,48 @@ func (input *InputReceiver[T]) Submit(job Job[T]) error {
 	}
 }
 
-// the InputReceiver uses a simple state machine to control its state
+// the InputReceiver uses a simple state machine to processes its state
 // the state transitions are detailed in startControlLoop changes are triggered by the Start and Stop methods
-func (input *InputReceiver[T]) startControlLoop() {
-	input.updateState(STARTING)
+func (input *InputReceiver[T]) startInputReceiver() {
+	input.control.receive.resetAndMarkStarting()
 	for {
 		select {
 		case s := <-input.control.receive.change:
-			if s == STARTING {
+			switch s {
+			case STOPPED:
+				input.log.Info("Input receiver stopped.")
+				input.control.receive.markStopped()
+				return
+			case STARTING:
 				input.log.Info("Input receiver starting.")
+				input.muAccept.Lock()
 				input.accept = true
-				input.updateState(STARTED)
-			}
-			if s == STOPPING {
-				input.log.Info("Input receiver stopping")
+				input.muAccept.Unlock()
+				input.control.receive.markStarted()
+			case STARTED:
+				input.log.Info("Input receiver started.")
+			case STOPPING:
+				input.log.Info("Input receiver stopping.")
 				input.muAccept.Lock()
 				input.accept = false
 				input.muAccept.Unlock()
-				for {
+
+				hasPending := true
+				for hasPending {
 					// Optimistically, pending should be '0' most of the time
 					input.muPending.RLock()
 					p := input.pending
 					input.muPending.RUnlock()
 					if p == 0 {
-						input.control.receive.stop <- true
-						input.updateState(STOPPED)
-						break
+						hasPending = false
+						input.control.receive.markStopped()
+						input.log.Info("Receive Loop Stopped")
 					} else {
 						time.Sleep(10 * time.Millisecond)
 					}
 				}
 			}
-			if s == STARTED {
-				input.log.Info("Input receiver started.")
-				input.control.waitUntilStarted <- true
-			}
-			if s == STOPPED {
-				input.log.Info("Input receiver stopped")
-				input.control.waitUntilStopped <- true
-				return
-			}
-		}
-	}
-}
 
-func (input *InputReceiver[T]) startReceiveLoop() {
-	for {
-		select {
-		case <-input.control.receive.stop:
-			input.log.Info("Stopping Receive Loop")
-			return
 		case job := <-input.receiver:
 			input.log.Debug("Job received", "Id", job.Id)
 			input.muPending.Lock()
@@ -147,30 +136,25 @@ func (input *InputReceiver[T]) startReceiveLoop() {
 
 // Start signals the InputReceiver can accept jobs and activates the input goroutine
 func (input *InputReceiver[T]) Start() {
-	if input.control.receive.state == STOPPED {
-		go input.startControlLoop()
-		go input.startReceiveLoop()
-		<-input.control.waitUntilStarted
+	if input.control.state == STOPPED {
+		input.control.state = STARTING
+		go input.startInputReceiver()
+		<-input.control.receive.started
+		input.control.state = STARTED
 	} else {
-		input.log.Error("InputReceiver is already running. Cannot start it twice.")
+		input.log.Error("InputReceiver is already running. Cannot started it twice.")
 	}
 }
 
-// updateState is a helper function to ensure consistent state transition
-func (input *InputReceiver[T]) updateState(state ProcessState) {
-	input.log.Debug("State change", "from", input.control.receive.state, "to", state)
-	input.control.receive.state = state
-	input.control.receive.change <- state
-}
-
-// Stop signals the InputQueue to stop accepting new jobs
+// Stop signals the InputQueue to stopped accepting new jobs
 func (input *InputReceiver[T]) Stop() {
-	if input.control.receive.state == STARTED {
-		input.log.Info("Stopping InputReceiver.")
-		input.updateState(STOPPING)
-		<-input.control.waitUntilStopped
+	if input.control.state == STARTED {
+		input.control.state = STOPPING
+		input.control.receive.Stop()
+		<-input.control.receive.stopped
+		input.control.state = STOPPED
 	} else {
-		input.log.Error("Cannot stop InputReceiver", "State", input.control.receive.state)
+		input.log.Error("Cannot stop InputReceiver", "State", input.control.state)
 	}
 }
 
@@ -208,15 +192,8 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 		queue:    &queue,
 		log:      logger,
 		control: inputReceiverControl{
-			receive: uProcess{
-				state:  STOPPED,
-				change: make(chan ProcessState, 1),
-				stop:   make(chan bool, 1),
-			},
-
-			// Signals
-			waitUntilStopped: make(chan bool, 1),
-			waitUntilStarted: make(chan bool, 1),
+			state:   STOPPED,
+			receive: newUProcess(),
 		},
 		queueThreshold:      opts.Queue.Threshold,
 		queueThresholdEvent: make(chan QueueThresholdEvent, 1),
