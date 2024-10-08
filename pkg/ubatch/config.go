@@ -10,11 +10,12 @@ type Config struct {
 
 // BatchTriggerOptions are used to configuring when MicroBatcher sends new to the BatchProcessor
 type BatchTriggerOptions struct {
-	// A new batch is prepared when the input queue length reaches the Batch Trigger Limit
-	// If this Limit is 0 or less, the trigger is disabled
-	Limit int
-	// A new batch is prepared periodically at the Interval.
-	// If this Interval is 0 or less, the trigger is disabled
+	// When the input queue length reaches the Threshold, a new micro-batch is created.
+	// If this Threshold is 0 or less, the trigger is disabled.
+	Threshold int
+	// A new micro-batch is created periodically at the specified Interval.
+	// If queue length is 0 at the time of triggering then no batch is sent (it would be empty).
+	// If this Interval is 0 or less, the trigger is disabled.
 	Interval time.Duration
 }
 
@@ -41,8 +42,8 @@ type QueueOptions struct {
 // DefaultConfig provides sensible defaults for the MicroBatcher.
 var DefaultConfig = Config{
 	Batch: BatchTriggerOptions{
-		Limit:    10,
-		Interval: 1 * time.Second,
+		Threshold: 10,
+		Interval:  1 * time.Second,
 	},
 	Input: InputOptions{
 		ChannelOptions{
