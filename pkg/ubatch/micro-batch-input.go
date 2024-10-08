@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -26,13 +25,18 @@ type inputReceiverControl struct {
 	waitUntilStarted chan bool
 }
 
+type QueueThresholdEvent struct{}
+
 // The InputReceiver supports multiple processes submitting Jobs simultaneously.
 // Jobs are transferred from the receiver channel to the queue.
 type InputReceiver[T any] struct {
 	accept   bool
 	muAccept sync.RWMutex
 	// The number of pending jobs submitted to the receiver which have not yet been queued
-	pending atomic.Int32
+
+	pending   int
+	muPending sync.RWMutex
+
 	control inputReceiverControl
 
 	// The receiver buffers incoming Jobs before they are added to the queue
@@ -40,9 +44,13 @@ type InputReceiver[T any] struct {
 
 	queue   *[]Job[T]
 	muQueue sync.RWMutex
-	// TODO: could add a threshold to reduce number of events sent
-	queueEventBus *chan<- QueueEvent
-	log           *slog.Logger
+
+	// A consumer can subscribe to the queueThresholdEvent channel to be notified when the queueThreshold is reached
+	// If queueThreshold is not greater than 0, this behaviour is disabled.
+	// If the queueThresholdEvent has not been cleared, subsequent events will be skipped until the channel is cleared
+	queueThreshold      int
+	queueThresholdEvent chan QueueThresholdEvent
+	log                 *slog.Logger
 }
 
 // Submit a job to the InputReceiver.
@@ -51,17 +59,16 @@ func (input *InputReceiver[T]) Submit(job Job[T]) error {
 	input.muAccept.RLock()
 	defer input.muAccept.RUnlock()
 	if input.accept {
-		input.pending.Add(1)
-		input.log.Debug("Job Submitted.", "PendingItems", input.pending.Load())
+		input.muPending.Lock()
+		input.pending += 1
+		p := input.pending
+		input.muPending.Unlock()
+		input.log.Debug("Job Submitted.", "PendingItems", p)
 		input.receiver <- job
 		return nil
 	} else {
 		return ErrJobRefused
 	}
-}
-
-func (input *InputReceiver[T]) EventBus(eb *chan<- QueueEvent) {
-	input.queueEventBus = eb
 }
 
 // the InputReceiver uses a simple state machine to control its state
@@ -83,7 +90,10 @@ func (input *InputReceiver[T]) startControlLoop() {
 				input.muAccept.Unlock()
 				for {
 					// Optimistically, pending should be '0' most of the time
-					if input.pending.Load() == 0 {
+					input.muPending.RLock()
+					p := input.pending
+					input.muPending.RUnlock()
+					if p == 0 {
 						input.control.stopReceiveLoop <- true
 						input.updateState(STOPPED)
 						break
@@ -113,19 +123,25 @@ func (input *InputReceiver[T]) startReceiveLoop() {
 			return
 		case job := <-input.receiver:
 			input.log.Debug("Job received", "Id", job.Id)
-			input.pending.Add(-1)
-			input.log.Debug("Pending input", "PendingItems", input.pending.Load())
-			input.muQueue.RLock()
-			*(input.queue) = append(*(input.queue), job)
-			if input.queueEventBus != nil {
-				msg := QueueEvent{Size: len(*(input.queue))}
+			input.muPending.Lock()
+			input.pending -= 1
+			p := input.pending
+			input.muPending.Unlock()
+			input.log.Debug("Pending input", "PendingItems", p)
+
+			input.muQueue.Lock()
+			*input.queue = append(*input.queue, job)
+			queueLen := len(*input.queue)
+			input.muQueue.Unlock()
+
+			if input.queueThreshold > 0 && queueLen == input.queueThreshold {
 				select {
-				case *input.queueEventBus <- msg:
+				case input.queueThresholdEvent <- QueueThresholdEvent{}:
+					input.log.Debug("QueueThresholdEvent sent")
 				default:
-					input.log.Debug("Skipped sending QueueEvent", "QueueSize", msg.Size)
+					input.log.Debug("QueueThresholdEvent skipped sending")
 				}
 			}
-			input.muQueue.RUnlock()
 		}
 	}
 }
@@ -200,6 +216,8 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 			waitUntilStopped: make(chan bool, 1),
 			waitUntilStarted: make(chan bool, 1),
 		},
+		queueThreshold:      opts.Queue.Threshold,
+		queueThresholdEvent: make(chan QueueThresholdEvent, 1),
 	}
 }
 
@@ -213,10 +231,12 @@ func NewInputReceiver[T any](opts InputOptions, logger *slog.Logger) InputReceiv
 //	that nothing goes missing
 func (input *InputReceiver[T]) WaitForPending() {
 	for {
-		if input.pending.Load() == 0 {
+		input.muPending.RLock()
+		p := input.pending
+		input.muPending.RUnlock()
+		if p == 0 {
 			break
 		}
-		// the input
 		time.Sleep(1 * time.Millisecond)
 	}
 }

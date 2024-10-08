@@ -14,7 +14,7 @@ import (
 func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
 	var batchProcessor BatchProcessor[string, string] = mock.NewEchoService[string, string](0)
 	microBatcher := NewMicroBatcher[string, string](DefaultConfig, &batchProcessor, logger)
-	microBatcher.Run()
+	microBatcher.Start()
 	j := Job[string]{
 		Data: "Hello",
 		Id:   1,
@@ -30,7 +30,7 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
-	microBatcher.Run()
+	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 	for i := 0; i < 10; i++ {
 		r := microBatcher.Submit(jobs.Feed())
@@ -46,7 +46,7 @@ func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
-	microBatcher.Run()
+	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 
 	var wg sync.WaitGroup
@@ -77,7 +77,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 	conf.Batch.Interval = 0
 
 	microBatcher := NewMicroBatcher[string, string](conf, &batchProcessor, logger)
-	microBatcher.Run()
+	microBatcher.Start()
 	j := Job[string]{
 		Data: "Hello",
 		Id:   1,
@@ -110,10 +110,11 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
-	conf.Batch.Threshold = 5
+	conf.Input.Queue.Threshold = 5
 
+	// lvl.Set(slog.LevelDebug)
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
-	microBatcher.Run()
+	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()
 
@@ -123,10 +124,10 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				microBatcher.Submit(jobs.Feed())
-				r := microBatcher.Submit(jobs.Feed())
-				assert.Equal(t, i, r.Ok)
-				assert.Equal(t, Id(i), r.Id)
+				job := jobs.Feed()
+				r := microBatcher.Submit(job)
+				assert.Equal(t, job.Data, r.Ok)
+				assert.Equal(t, job.Id, r.Id)
 				assert.Nil(t, r.Err)
 			}()
 		}
@@ -144,11 +145,12 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 
 		// Submitting the 5th job causes the input Threshold to be reached, triggering a new micro-batch
 		// All outstanding jobs should complete
-		job := jobs.Feed()
+
 		t.Log("This job should trigger a new micro-batch")
 
 		completed := make(chan bool, 1)
 		go func() {
+			job := jobs.Feed()
 			r := microBatcher.Submit(job)
 			assert.Equal(t, 0, len(*microBatcher.input.queue))
 			assert.Equal(t, job.Data, r.Ok)

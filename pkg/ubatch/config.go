@@ -12,7 +12,8 @@ type Config struct {
 type BatchTriggerOptions struct {
 	// When the input queue length reaches the Threshold, a new micro-batch is created.
 	// If this Threshold is 0 or less, the trigger is disabled.
-	Threshold int
+	// Threshold int
+
 	// A new micro-batch is created periodically at the specified Interval.
 	// If queue length is 0 at the time of triggering then no batch is sent (it would be empty).
 	// If this Interval is 0 or less, the trigger is disabled.
@@ -34,6 +35,8 @@ type ChannelOptions struct {
 type QueueOptions struct {
 	// Size is the initial Capacity
 	Size int
+	// If Threshold is greater than 0, trigger a QueueThresholdEvent when the queue length reaches the Threshold
+	Threshold int
 }
 
 // TODO: Revise DefaultConfig when we have more concrete use cases.
@@ -42,15 +45,18 @@ type QueueOptions struct {
 // DefaultConfig provides sensible defaults for the MicroBatcher.
 var DefaultConfig = Config{
 	Batch: BatchTriggerOptions{
-		Threshold: 10,
-		Interval:  1 * time.Second,
+		// TODO: duplicate setting - create a special QueueOptions for this config, restore Threshold below
+		//Threshold: 10,
+		Interval: 1 * time.Second,
 	},
 	Input: InputOptions{
 		ChannelOptions{
 			1,
 		},
 		QueueOptions{
-			16,
+			Size: 16,
+			// TODO: remove Threshold - see note in BatchTriggerOptions above
+			Threshold: 0,
 		},
 	},
 }

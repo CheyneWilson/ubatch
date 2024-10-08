@@ -5,11 +5,21 @@ import (
 	"cheyne.nz/ubatch/test/util/perf/feeder"
 	"github.com/stretchr/testify/assert"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 )
 
-var logger = slog.Default()
+func configureLogger() *slog.Logger {
+	opts := &slog.HandlerOptions{
+		// Note: Debug logging can be enabled by simply uncommenting the below linke
+		// Level: slog.LevelDebug,
+	}
+	handler := slog.NewTextHandler(os.Stdout, opts)
+	return slog.New(handler)
+}
+
+var logger = configureLogger()
 
 // TestInputReceiver_SingleUser_Submit validates the job Submit process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
@@ -203,7 +213,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	}
 
 	assert.Equal(t, 0, len(*inputReceiver.queue))
-	assert.Equal(t, 0, int(inputReceiver.pending.Load()))
+	assert.Equal(t, 0, inputReceiver.pending)
 
 	// There should be 100,000 jobs with unique IDs
 	set := make(map[types.Id]bool)
