@@ -16,7 +16,7 @@ var (
 // inputReceiverControl contains state of the InputReceiver and signal channels to coordinate processes & actions
 type inputReceiverControl struct {
 	// the state of the InputReceiver
-	state   ProcessState
+	state   uProcessState
 	receive uProcess
 }
 

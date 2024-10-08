@@ -8,80 +8,7 @@ import (
 	"time"
 )
 
-type ProcessState int32
-
-const (
-	STOPPED  ProcessState = iota
-	STARTING ProcessState = iota
-	STARTED  ProcessState = iota
-	STOPPING ProcessState = iota
-)
-
-type uProcess struct {
-	state   ProcessState
-	stopped chan uEvent
-	started chan uEvent
-	change  chan ProcessState
-}
-
 type uEvent struct{}
-
-func newUProcess() uProcess {
-	return uProcess{
-		state:   STOPPED,
-		stopped: make(chan uEvent, 1),
-		started: make(chan uEvent, 1),
-		change:  make(chan ProcessState, 1),
-	}
-}
-
-// Reset clear any previous stopped/started signals
-func (up *uProcess) Reset() {
-	// This protects against a double-stopped bug.
-	// E.g. the actions Start, Stop, Stop, Start would cause the process eventLoop to Stop
-	select {
-	case <-up.stopped:
-	default:
-	}
-	select {
-	case <-up.started:
-	default:
-	}
-}
-
-func (up *uProcess) resetAndMarkStarting() {
-	up.Reset()
-	up.state = STARTING
-	up.change <- STARTING
-}
-
-func (up *uProcess) markStarted() {
-	up.state = STARTED
-	up.change <- STARTED
-	up.started <- uEvent{}
-}
-
-// Stop signals the stopped procedure should be run for this process
-// It returns once the process has stopped
-func (up *uProcess) Stop() {
-	up.state = STOPPING
-	up.change <- STOPPING
-}
-
-// StopIfStarted conditionally calls the Stop() method if this process is STARTED
-func (up *uProcess) StopIfStarted() {
-	if up.state == STARTED {
-		up.Stop()
-	}
-}
-
-// markStopped changes the state to STOPPED and triggers a stopped event
-func (up *uProcess) markStopped() {
-	up.state = STOPPED
-	// We don't send a change event because the event loop has been stopped
-	// e.g. don't do this ;p  up.change <- STOPPED
-	up.stopped <- uEvent{}
-}
 
 type uProcesses struct {
 	periodic  uProcess
@@ -148,7 +75,7 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 // * stopping the input receiver from receiving further jobs
 // * batching up the remaining items from the input queue
 // * sending these batches to the batch processor
-func (mb *MicroBatcher[T, R]) Shutdown() {
+func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.input.Stop()
 	mb.input.WaitForPending()
 
@@ -175,7 +102,7 @@ func (mb *MicroBatcher[T, R]) Shutdown() {
 
 }
 
-func (mb *MicroBatcher[T, R]) addResult(result Result[R]) {
+func (mb *MicroBatcher[_, R]) addResult(result Result[R]) {
 	mb.responseMu.Lock()
 	mb.response[result.Id] = result
 	mb.responseMu.Unlock()
