@@ -6,6 +6,7 @@ import (
 	"cheyne.nz/ubatch/test/util/perf/feeder"
 	"github.com/stretchr/testify/assert"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -103,7 +104,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 	assert.Nil(t, r.Err)
 }
 
-// TestMicroBatcher_SingleUser_Threshold tests that  a micro-batch is sent when the input queue Threshold is reached.
+// TestMicroBatcher_SingleUser_Threshold tests that a micro-batch is sent when the input queue Threshold is reached.
 func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
 
@@ -166,5 +167,43 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 	microBatcher.Shutdown()
 }
 
-// TODO: test for duplicate IDs, need to add this functionality in
-// TODO: allow the trigger config to be changed/updated (put this in future scope)
+// TestMicroBatcher_MultiUser_Threshold that a micro-batch is sent when the input queue Threshold is reached
+// during a highly-concurrent use case.
+func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
+	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
+
+	conf := DefaultConfig
+	conf.Batch.Interval = 0
+	conf.Batch.Threshold = 37
+
+	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher.Start()
+
+	jobs := feeder.NewSequentialJobFeeder()
+
+	var total atomic.Int32
+
+	for j := 0; j < 100; j++ {
+		for i := 0; i < 100; i++ {
+			go func() {
+				job := jobs.Feed()
+				r := microBatcher.Submit(job)
+				assert.Equal(t, job.Data, r.Ok)
+				assert.Equal(t, job.Id, r.Id)
+				assert.Nil(t, r.Err)
+				total.Add(1)
+			}()
+		}
+	}
+
+	time.Sleep(5 * time.Second)
+	// Note, we cannot use a wait group directly as the Submit job is synchronous
+	// There will be some queued jobs because threshold has not been reached for the final batch
+	// shutting down microBatcher will trigger final batch to be sent
+	qLen := len(*microBatcher.input.queue)
+	t.Log("Outstanding items in queue", "queue length", qLen)
+	microBatcher.Shutdown()
+
+	time.Sleep(5 * time.Second)
+	assert.Equal(t, 10000, int(total.Load()))
+}

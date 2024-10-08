@@ -41,13 +41,20 @@ type eventChannels struct {
 	recv sync.Map
 }
 
+func (mb *MicroBatcher[_, T]) preWait(id Id) {
+	c := make(chan any, 1)
+	_, loaded := mb.event.recv.LoadOrStore(id, c)
+	if loaded {
+		// TODO: Handle duplicate ID
+		mb.log.Error("Map should be empty for ID", "Id", id)
+	}
+}
+
 // Wait blocks until a response signal is sent
 func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
-	mb.event.recv.Store(id, make(chan any, 1))
 	recv, ok := mb.event.recv.Load(id)
 	if ok {
 		<-recv.(chan any)
-		mb.log.Debug("Response received", "Id", id)
 		mb.event.recv.Delete(id)
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
@@ -57,13 +64,13 @@ func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	delete(mb.response, id)
 	mb.responseMu.Unlock()
 	return res
-	// TODO: could add a timeout
 }
 
 // unWait is used to signal to the Submit method that the Result is available in the response map given Job ID
 func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	recv, ok := mb.event.recv.Load(id)
 	if ok {
+		mb.log.Debug("loaded recv channel", "JobId", id)
 		recv.(chan any) <- uEvent{}
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
@@ -130,7 +137,7 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 		},
 
 		event: eventChannels{
-			send: make(chan any),
+			send: make(chan any, 1),
 		},
 		// the response channel handles the results returned from the BatchProcessor
 		response: make(map[Id]Result[R]),
@@ -164,6 +171,7 @@ func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 
 // Submit adds a job to a micro batch and returns the result when it is available
 func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
+	mb.preWait(job.Id)
 	err := mb.input.Submit(job)
 	if err != nil {
 		return Result[R]{
