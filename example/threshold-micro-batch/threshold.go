@@ -12,7 +12,7 @@ import (
 
 func main() {
 	log := slog.Default()
-	var batchProcessor = mock.NewEchoService[int](0)
+	batchProcessor := mock.NewEchoService[int](0)
 	conf := ubatch.DefaultConfig
 
 	// Batches will be returned
