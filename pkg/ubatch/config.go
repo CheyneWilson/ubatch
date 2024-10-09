@@ -57,14 +57,18 @@ type QueueOptions struct {
 // DefaultConfig provides sensible defaults for the MicroBatcher.
 var DefaultConfig = UConfig{
 	Batch: BatchTriggerOptions{
+		// Trigger a micro-batch whenever the input queue reaches this length
 		Threshold: 0,
-		Interval:  1 * time.Second,
+		// Trigger a micro-batch periodically at this Interval if the input queue length is 1 or more.
+		Interval: 1 * time.Second,
 	},
 	Input: InputOptions{
 		ChannelOptions{
+			// The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
 			1,
 		},
 		QueueOptions{
+			// Default size for the input receiver queue. The queue will grow automatically as necessary.
 			Size: 16,
 		},
 	},

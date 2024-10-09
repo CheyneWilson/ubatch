@@ -89,7 +89,29 @@ See further examples [here](example).
 
 # Config
 
-TODO: Explain how to configure the library
+This library can be configured via `ubatch.UConfig`. The configuration options and the values for the default config are
+shown below. 
+
+```go
+UConfig{
+	Batch: BatchTriggerOptions{
+		// Trigger a micro-batch whenever the input queue reaches this length
+		Threshold: 0,
+		// Trigger a micro-batch periodically at this Interval if the input queue length is 1 or more.
+		Interval: 1 * time.Second,
+	},
+	Input: InputOptions{
+		ChannelOptions{
+			// The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
+			1,
+		},
+		QueueOptions{
+			// Default size for the input receiver queue. The queue will grow automatically as necessary.
+			Size: 16,
+		},
+	},
+}
+```
 
 # Design / Architecture
 
