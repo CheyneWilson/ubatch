@@ -1,14 +1,29 @@
 # Micro-batching library
 
-TODO: Introduction and Overview of sections
+A micro-batch processor creates groups incoming requests which are sent to a batch processor frequently.
+Micro-batches are sent for processing based on configurable criteria including the input job queue length and a
+periodic trigger interval.
 
-## Outline
+```mermaid
+  graph LR;
+    A["User A"] -- Job A --> MicroBatcher
+    B["User B"] -- Job B --> MicroBatcher
+    C["User C"] -- Job C --> MicroBatcher
+    MicroBatcher -- Jobs A,B,C --> BatchProcessor
+    BatchProcessor -- Results A,B,C --> MicroBatcher
+    A <-- Result A --> MicroBatcher
+    B <-- Result B --> MicroBatcher
+    C <-- Result C --> MicroBatcher
+```
 
 The purpose of the library is to group individual requests (job) into batches. These will be submitted to the downstream
-service when either of the following conditions are met
+service when either of the following conditions are met:
 
-* A batch size reaches a certain size
+* A batch size reaches a certain threshold
 * Periodically, regardless of batch size
+
+Jobs are submitted to the micro-batch processor via the `Submit(job Job[T]) Result[R]`. This returns when the
+micro-batch has been processed and the result is available.
 
 # Usage
 
@@ -139,4 +154,4 @@ required. These can simulate behaviours such as dropped requests (no response), 
 ## Versioning / Release notes
 
 Versioning / Release notes could be added via [Release Please](https://github.com/googleapis/release-please) by using
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). 
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
