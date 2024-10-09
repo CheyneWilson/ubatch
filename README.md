@@ -27,6 +27,9 @@ micro-batch has been processed and the result is available.
 
 # Usage
 
+The `MicroBatcher` is created via the `NewMicroBatcher(conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger)`
+function. The logger is optional and `nil` can be provided which will disable logging.
+
 ## Importing
 
 This package has not been published to a package repo. See roadmap for more info
@@ -113,14 +116,6 @@ UConfig{
 }
 ```
 
-# Design / Architecture
-
-TODO: Include some details about the architecture
-
-## Components
-
-TODO: Simple component diagram of key components / processes
-
 # Testing
 
 Tests can be run via your IDE or on the command line as follows.
@@ -134,9 +129,7 @@ go test
 The tests use a common `*slog.Logger` which has been configured at `slog.LevelInfo`. The log level can be
 increase/decreased, and the logger can even be replaced with a `nil` value.
 
-## util/perf
-
-The **Feeder** concept popularized in Gatling [Feeders](https://docs.gatling.io/reference/script/core/session/feeders/)
+The **feeder** concept popularized in [Gatling](https://docs.gatling.io/reference/script/core/session/feeders/)
 is used to create the jobs used for the concurrency tests.
 
 # Roadmap
