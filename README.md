@@ -1,13 +1,14 @@
 # Micro-batching library
 
-TODO: Overview of sections
+TODO: Introduction and Overview of sections
 
 ## Outline
 
 The purpose of the library is to group individual requests (job) into batches. These will be submitted to the downstream
 service when either of the following conditions are met
- * A batch size reaches a certain size
- * Periodically, regardless of batch size
+
+* A batch size reaches a certain size
+* Periodically, regardless of batch size
 
 # Usage
 
@@ -43,7 +44,7 @@ type BatchProcessor[T any, R any] interface {
 ## Example Usage
 
 An example of how to use the `MicroBatcher` library is shown below.
-The `mock.NewEchoService` returns the `Job` `Data` sent to it as `Result` `OK` message.  
+The `mock.NewEchoService` returns the `Job` `Data` sent to it as `Result` `OK` message.
 
 ```go
 package main
@@ -71,37 +72,71 @@ func main() {
 
 See further examples [here](example).
 
-# Design / Structure
+# Config
 
-## Input
+TODO: Explain how to configure the library
 
+# Design / Architecture
 
-## Config
+TODO: Include some details about the architecture
 
-TODO: Explain the config approach
+## Components
 
+TODO: Simple component diagram of key components / processes
 
 # Testing
 
-## Approach
+Tests can be run via your IDE or on the command line as follows.
 
-TODO: Explain why util/perf was created, and the role is serves. This should be evident when the tests are read
+```sh
+sh
+cd pkg/ubatch
+go test
+```
 
+The tests use a common `*slog.Logger` which has been configured at `slog.LevelInfo`. The log level can be
+increase/decreased, and the logger can even be replaced with a `nil` value.
+
+## util/perf
+
+The **Feeder** concept popularized in Gatling [Feeders](https://docs.gatling.io/reference/script/core/session/feeders/)
+is used to create the jobs used for the concurrency tests.
 
 # Roadmap
 
-The roadmap of contains possible future enhancements / next steps
+The roadmap of contains possible future enhancements / next steps for this library.
 
 ## Publish package
 
 There are currently no plans to publish this package. It was created as an exercise and for fun.
 
-# Future enhancements
+## Split InputReceiver and MicroBatcher into separate modules
 
-Below is a list of potential future enhancements
+The `MicroBatcher` and `InputReceiver` are configured slightly differently. The `InputReceiver` uses `IRInputOptions`
+which contains the `Threshold` setting which triggers events when the input queue reaches that length.
+The corresponding `Threshold` setting for `MicroBatcher` is configured in `BatchOptions`. `MicroBatcher` does not
+use `IRInputOptions`, instead preferring the struct `InputOptions` so to avoid having the `Threshold` set in two places.
 
-1. **Reconfigurable micro-batcher**. Currently, the config is passed to the constructor. A small enhancement would be
-to allow this to be dynamically changed.
+The `InputReceiver` and its `IRInputOptions` public. They should be moved to their own module so that this becomes an
+implementation detail, and not part of the MicroBatcher API.
 
-// TODO: test for duplicate IDs, need to add this functionality in
-// TODO: allow the trigger config to be changed/updated (put this in future scope)
+## Handling for Duplicate job IDs
+
+The library assumes that each submitted job has a unique ID. To improve the API for consumers, ensure that the library
+rejects any new Jobs which have the same ID as one already being processed. It should log a warning when this scenario
+occurs.
+
+## Make InputReceiver and MicroBatcher reconfigurable
+
+Currently, these components are configured when they are created. A small improvement would be to allow their config to
+to be dynamically changed.
+
+## Further mock Batch Processors (to aid testing)
+
+To fully explore the performance / behaviour and edge cases of the `MicroBatcher`, additional mock Batch Processors are
+required. These can simulate behaviours such as dropped requests (no response), timeouts, and other errors.
+
+## Versioning / Release notes
+
+Versioning / Release notes could be added via [Release Please](https://github.com/googleapis/release-please) by using
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). 
