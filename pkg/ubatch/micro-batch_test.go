@@ -13,7 +13,7 @@ import (
 
 // TestMicroBatcher_EndToEnd_Single checks that the Job sent to the MicroBatcher returns a Result
 func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
-	var batchProcessor BatchProcessor[string, string] = mock.NewEchoService[string](0)
+	var batchProcessor = mock.NewEchoService[string](0)
 	microBatcher := NewMicroBatcher[string, string](DefaultConfig, &batchProcessor, logger)
 	microBatcher.Start()
 	j := Job[string]{
@@ -27,7 +27,7 @@ func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
 }
 
 func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
-	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
+	var batchProcessor = mock.NewEchoService[int](0)
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
@@ -43,7 +43,7 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 }
 
 func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
-	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
+	var batchProcessor = mock.NewEchoService[int](0)
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
@@ -72,7 +72,7 @@ func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 // TestMicroBatcher_SingleUser_NoTriggerInterval tests that the micro-batcher does not send jobs to the BatchProcessor
 // when the Batch Interval is 0. It also tests that the Result is returned successfully during a graceful Shutdown.
 func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
-	var batchProcessor BatchProcessor[string, string] = mock.NewEchoService[string](0)
+	var batchProcessor = mock.NewEchoService[string](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
@@ -106,7 +106,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 
 // TestMicroBatcher_SingleUser_Threshold tests that a micro-batch is sent when the input queue Threshold is reached.
 func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
-	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
+	var batchProcessor = mock.NewEchoService[int](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
@@ -170,7 +170,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 // TestMicroBatcher_MultiUser_Threshold that a micro-batch is sent when the input queue Threshold is reached
 // during a highly-concurrent use case.
 func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
-	var batchProcessor BatchProcessor[int, int] = mock.NewEchoService[int](0)
+	var batchProcessor = mock.NewEchoService[int](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0

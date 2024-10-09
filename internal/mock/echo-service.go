@@ -13,14 +13,14 @@ type EchoService[T any, R any] struct {
 }
 
 // NewEchoService constructs a new EchoService.
-func NewEchoService[T any](delay time.Duration) *EchoService[T, T] {
+func NewEchoService[T any](delay time.Duration) BatchProcessor[T, T] {
 	return &EchoService[T, T]{
 		delay: delay,
 	}
 }
 
 // Process returns a batch of successful results that contain the same data as the input jobs.
-func (bp *EchoService[T, _]) Process(jobs []Job[T]) []Result[T] {
+func (bp *EchoService[T, R]) Process(jobs []Job[T]) []Result[T] {
 	res := make([]Result[T], 0, len(jobs))
 	for _, job := range jobs {
 		r := Result[T]{

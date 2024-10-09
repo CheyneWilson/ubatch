@@ -3,7 +3,6 @@ package main
 import (
 	"cheyne.nz/ubatch/internal/mock"
 	"cheyne.nz/ubatch/pkg/ubatch"
-	"cheyne.nz/ubatch/pkg/ubatch/types"
 	"cheyne.nz/ubatch/test/util/perf/feeder"
 	"fmt"
 	"log/slog"
@@ -13,7 +12,7 @@ import (
 
 func main() {
 	log := slog.Default()
-	var batchProcessor types.BatchProcessor[int, int] = mock.NewEchoService[int](0)
+	var batchProcessor = mock.NewEchoService[int](0)
 	conf := ubatch.DefaultConfig
 
 	// Batches will be returned
