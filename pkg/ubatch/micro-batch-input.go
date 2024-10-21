@@ -165,15 +165,21 @@ func (input *InputReceiver[T]) PrepareBatch() []Job[T] {
 	// Set the input queue capacity to the highest value seen
 	// There are other ways to sizing this, this approach minimizes resizing but will use more memory on average
 	// TODO: test highWater behaviour
+	input.muQueue.Lock()
 	highWater := cap(*(input.queue))
 	emtpy := make([]Job[T], 0, highWater)
-
-	input.muQueue.Lock()
 	batch := *input.queue
 	input.queue = &emtpy
 	input.muQueue.Unlock()
 	input.log.Debug("Batch prepared.", "BatchSize", len(batch))
 	return batch
+}
+
+func (input *InputReceiver[T]) queueLen() int {
+	input.muQueue.RLock()
+	length := len(*input.queue)
+	input.muQueue.RUnlock()
+	return length
 }
 
 // NewInputReceiver creates a new InputReceiver
