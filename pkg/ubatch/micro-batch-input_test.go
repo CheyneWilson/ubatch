@@ -32,28 +32,28 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.WaitForPending()
-	assert.Equal(t, 100, len(*inputReceiver.queue))
+	assert.Equal(t, 100, inputReceiver.queueLen())
 
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.WaitForPending()
-	assert.Equal(t, 200, len(*inputReceiver.queue))
+	assert.Equal(t, 200, inputReceiver.queueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 1000; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.WaitForPending()
-	assert.Equal(t, 1200, len(*inputReceiver.queue))
+	assert.Equal(t, 1200, inputReceiver.queueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 10000; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.WaitForPending()
-	assert.Equal(t, 11200, len(*inputReceiver.queue))
 
+	assert.Equal(t, 11200, inputReceiver.queueLen())
 	// The queue should contain sequential jobs from 1 to 11200
 	for i := 0; i < 11200; i++ {
 		expected := i
@@ -82,9 +82,10 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 	wg.Wait()
 	inputReceiver.WaitForPending()
 
-	assert.Equal(t, 100000, len(*inputReceiver.queue))
-
 	set := make(map[types.Id]bool)
+
+	assert.Equal(t, 100000, inputReceiver.queueLen())
+
 	// There should be 100,000 jobs with unique IDs
 	for i := 0; i < len(*inputReceiver.queue); i++ {
 		id := (*inputReceiver.queue)[i].Id
@@ -122,7 +123,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	}
 	inputReceiver.WaitForPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
-	assert.Equal(t, len(*inputReceiver.queue), 0)
+	assert.Equal(t, inputReceiver.queueLen(), 0)
 	assert.Equal(t, len(jobsBatch2), 100)
 
 	const idOffset = 100
