@@ -1,7 +1,8 @@
 package ubatch
 
 import (
-	. "cheyne.nz/ubatch/pkg/ubatch/types"
+	. "cheyne.nz/ubatch/common/types"
+	"cheyne.nz/ubatch/receiver"
 	"io"
 	"log/slog"
 	"sync"
@@ -10,23 +11,23 @@ import (
 
 type uEvent struct{}
 
-type uProcesses struct {
-	periodic  uProcess
-	threshold uProcess
-	prepare   uProcess
-	send      uProcess
+type processControls struct {
+	stopPeriodic    chan any
+	periodicStopped chan any
+	stopSend        chan any
+	sendStopped     chan any
 }
 
 type MicroBatcher[T, R any] struct {
 	config         UConfig
 	BatchProcessor *BatchProcessor[T, R]
-	input          InputReceiver[T]
+	input          receiver.InputReceiver[Job[T]]
 
 	// TODO: would a sync.Map be better? We would want to measure the performance
 	response   map[Id]Result[R]
 	responseMu sync.Mutex
 
-	control uProcesses
+	control processControls
 
 	output chan []Job[T]
 	event  eventChannels
@@ -39,6 +40,9 @@ type eventChannels struct {
 	send chan any
 	// recv contains a mapping from Job.Id to a unique channel
 	recv sync.Map
+
+	// inputThreshold receives an event when the threshold is reached
+	inputThreshold chan QueueThresholdEvent
 }
 
 func (mb *MicroBatcher[_, T]) preWait(id Id) {
@@ -77,6 +81,21 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	}
 }
 
+func (mb *MicroBatcher[T, R]) stopPeriodic() {
+	// the periodic batch loop does not run if the interval is 0.
+	select {
+	case mb.control.stopPeriodic <- true:
+		<-mb.control.periodicStopped
+	default:
+	}
+}
+
+// gracefully
+func (mb *MicroBatcher[T, R]) stopSend() {
+	mb.control.stopSend <- true
+	<-mb.control.sendStopped
+}
+
 // Shutdown performs graceful shutdown
 // This involves:
 // * stopping the input receiver from receiving further jobs
@@ -84,29 +103,10 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 // * sending these batches to the batch processor
 func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.input.Stop()
-	mb.input.WaitForPending()
+	mb.log.Debug("Remaining input items", "Count", mb.input.QueueLen())
+	mb.stopPeriodic()
 
-	// TODO: if there is a batch size limit, then we may need multiple batches
-	// TODO: we could split it in the MicroBatcher or the InputReceiver
-	outstanding := mb.input.PrepareBatch()
-
-	// input.queue should be 0 following PrepareBatch, these event loops can be safely stopped
-	// TODO: could add additional guards / checks /tests around process handling
-	// If the Interval / Threshold were not set in the config, the periodic and threshold processes won't have been started
-	mb.control.periodic.StopIfStarted()
-	mb.control.threshold.StopIfStarted()
-	mb.control.prepare.Stop()
-
-	// call sendBatch directly bypasses the event loops
-	// if the batchProcessor is not thread-safe then this would be a problem
-	// TODO: consider how best to coordinate out output channel
-	mb.output <- outstanding
-
-	// FIXME: there could possibly be a rare race condition
-	// consider how best to coordinate the shutdown of the prepare and send event loops
-	// mb.processes.send.Stop()
-	// TODO: wait until all receive before
-
+	mb.stopSend()
 }
 
 func (mb *MicroBatcher[_, R]) addResult(result Result[R]) {
@@ -116,28 +116,43 @@ func (mb *MicroBatcher[_, R]) addResult(result Result[R]) {
 	mb.unWait(result.Id)
 }
 
+type QueueThresholdEvent struct {
+	queueLength int
+}
+
+// inputQueueThreshold
+func inputQueueThreshold(threshold int, evt *chan any) func(queueLength int) {
+	return func(queueLength int) {
+		if queueLength >= threshold {
+			*evt <- QueueThresholdEvent{queueLength}
+		}
+	}
+}
+
 func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
 		logger = slog.New(handler)
 	}
-	irConfig := conf.irInputOptions()
+
+	sendChan := make(chan any, 10)
+	thresholdReached := inputQueueThreshold(conf.Batch.Threshold, &sendChan)
 
 	return MicroBatcher[T, R]{
 		config:         conf,
 		BatchProcessor: processor,
-		input:          NewInputReceiver[T](irConfig, logger),
+		input:          receiver.New[Job[T]](conf.Input, logger, thresholdReached),
 
-		control: uProcesses{
-			periodic:  newUProcess(),
-			threshold: newUProcess(),
-			prepare:   newUProcess(),
-			send:      newUProcess(),
+		control: processControls{
+			stopPeriodic:    make(chan any),
+			periodicStopped: make(chan any),
+			stopSend:        make(chan any),
+			sendStopped:     make(chan any),
 		},
 
 		event: eventChannels{
-			send: make(chan any, 1),
+			send: sendChan,
 		},
 		// the response channel handles the results returned from the BatchProcessor
 		response: make(map[Id]Result[R]),
@@ -151,10 +166,8 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 // Start the batch processor
 func (mb *MicroBatcher[_, _]) Start() {
 	mb.input.Start()
-	go mb.startPeriodicBatchLoop()
-	go mb.startQueueThresholdEventLoop()
-	go mb.startPrepareBatchEventLoop()
-	go mb.startBatchProcessorClientLoop()
+	go mb.sendBatchEventLoop()
+	go mb.periodicBatchTriggerLoop()
 
 }
 
@@ -162,10 +175,14 @@ func (mb *MicroBatcher[_, _]) Start() {
 // When the BatchProcessor returns, the results are added to the response map and the associated Submit jobs are
 // notified that there is a result available via the recv channel for that ID.
 func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
-	mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
-	res := (*mb.BatchProcessor).Process(batch)
-	for i := 0; i < len(res); i++ {
-		mb.addResult(res[i])
+	if len(batch) > 0 {
+		mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
+		res := (*mb.BatchProcessor).Process(batch)
+		for i := 0; i < len(res); i++ {
+			mb.addResult(res[i])
+		}
+	} else {
+		mb.log.Debug("No batch jobs. Skipping send ")
 	}
 }
 
@@ -183,144 +200,50 @@ func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 	}
 }
 
-// startPeriodicBatchLoop starts a goroutine which periodically sends a send event to a channel
-func (mb *MicroBatcher[_, _]) startPeriodicBatchLoop() {
-	periodicTriggerProc := &mb.control.periodic
-
-	if state := periodicTriggerProc.state; state != STOPPED {
-		mb.log.Error("Cannot started PeriodicBatchLoop", "state", state)
-		return
-	}
-
-	if mb.config.Batch.Interval <= 0 {
-		mb.log.Info("Periodic Interval not set. Periodic Batch Loop will not be started.")
-		return
-	}
-	// TODO: can we pretty-print the Batch Interval with appropriate Human Readable units?
-	mb.log.Info("Periodic Batch Loop Timer.", "BatchInterval", mb.config.Batch.Interval)
-	ticker := time.NewTicker(mb.config.Batch.Interval)
-
-	periodicTriggerProc.resetAndMarkStarting()
-	for {
-		select {
-		case s := <-periodicTriggerProc.change:
-			switch s {
-			case STOPPED:
-				mb.log.Info("Periodic Batch Loop Stopped")
-				return
-			case STARTING:
-				periodicTriggerProc.markStarted()
-			case STARTED:
-				mb.log.Info("Periodic Batch Loop Started")
-			case STOPPING:
-				mb.log.Debug("Periodic Batch Loop Stopping")
-				periodicTriggerProc.markStopped()
-			}
-		case <-ticker.C:
+// periodicBatchTriggerLoop periodically sends messages to the event.send channel to trigger a batch of jobs to be processed
+//
+// The frequency depends on config.Batch.Interval. If this is 0, then no periodic messages are sent.
+func (mb *MicroBatcher[_, _]) periodicBatchTriggerLoop() {
+	if mb.config.Batch.Interval > 0 {
+		// TODO: can we pretty-print the Batch Interval with appropriate Human Readable units?
+		mb.log.Info("Periodic Batch Loop Timer.", "BatchInterval", mb.config.Batch.Interval)
+		periodic := time.NewTicker(mb.config.Batch.Interval)
+		for {
 			select {
-			case mb.event.send <- true:
-				mb.log.Debug("Periodic Send event")
-			default:
-				mb.log.Debug("Periodic Send event skipped")
+			case <-mb.control.stopPeriodic:
+				periodic.Stop()
+				mb.control.periodicStopped <- true
+				return
+			case <-periodic.C:
+				select {
+				case mb.event.send <- true:
+				default:
+					mb.log.Info("Send already scheduled, skipping periodic")
+				}
 			}
 		}
+	} else {
+		mb.log.Info("Periodic Interval not set. Periodic Batches will not be sent.")
+		return
 	}
 }
 
-func (mb *MicroBatcher[_, _]) startQueueThresholdEventLoop() {
-	if state := mb.control.threshold.state; state != STOPPED {
-		mb.log.Error("Cannot started Threshold Event Loop", "state", state)
-		return
-	}
-	if mb.input.queueThreshold <= 0 {
-		mb.log.Info("Queue Threshold not set. Threshold Event Loop will not be started.")
-		return
-	}
-
-	thresholdProc := &mb.control.threshold
-	thresholdProc.resetAndMarkStarting()
+func (mb *MicroBatcher[_, _]) sendBatchEventLoop() {
 	for {
 		select {
-		case s := <-thresholdProc.change:
-			switch s {
-			case STOPPED:
-				mb.log.Info("Threshold Event Loop Stopped")
-				return
-			case STARTING:
-				thresholdProc.markStarted()
-			case STARTED:
-				mb.log.Info("Threshold Event Loop Started")
-			case STOPPING:
-				mb.log.Debug("Threshold Event Loop Stopping")
-				thresholdProc.markStopped()
+		case <-mb.control.stopSend:
+			mb.log.Info("Stopping Send Batch Loop")
+			if mb.input.QueueLen() > 0 {
+				batch := mb.input.PrepareBatch()
+				mb.sendBatch(batch)
 			}
-		case <-mb.input.queueThresholdEvent:
-			select {
-			case mb.event.send <- true:
-				mb.log.Debug("Threshold Event Sent")
-			default:
-				mb.log.Debug("Threshold Event Skipped")
-			}
-		}
-	}
-}
-
-func (mb *MicroBatcher[_, _]) startPrepareBatchEventLoop() {
-	procBatchProc := &mb.control.prepare
-	procBatchProc.resetAndMarkStarting()
-	for {
-		select {
-		case s := <-procBatchProc.change:
-			switch s {
-			case STOPPED:
-				mb.log.Info("Prepare Batch Event Loop Stopped")
-				return
-			case STARTING:
-				procBatchProc.markStarted()
-			case STARTED:
-				mb.log.Info("Prepare Batch Event Loop Started")
-			case STOPPING:
-				mb.log.Debug("Prepare Batch Event Loop Stopping")
-				procBatchProc.markStopped()
-			}
+			mb.control.sendStopped <- true
+			return
 		case <-mb.event.send:
-			batch := mb.input.PrepareBatch()
-			if len(batch) > 0 {
-				mb.log.Debug("Sending to Batch Processor Client")
-
-				// TODO: if the output channel backs because of a slow BatchProcessor
-				//       this causes backpressure causing the PrepareBatchEventLoop to stall
-				//       this means a larger batch will be sent when the output channel clears
-				// TODO: test this scenario - confirm there is no lag in the process, e.g a small 'next' batch, with the
-				//       larger batch sent after that.
-				mb.output <- batch
-			} else {
-				mb.log.Debug("Empty Batch")
+			if mb.input.QueueLen() > 0 {
+				batch := mb.input.PrepareBatch()
+				mb.sendBatch(batch)
 			}
-		}
-	}
-}
-
-func (mb *MicroBatcher[_, _]) startBatchProcessorClientLoop() {
-	sendProc := &mb.control.send
-	sendProc.resetAndMarkStarting()
-	for {
-		select {
-		case s := <-sendProc.change:
-			switch s {
-			case STOPPED:
-				mb.log.Info("Send Event Loop Stopped")
-				return
-			case STARTING:
-				sendProc.markStarted()
-			case STARTED:
-				mb.log.Info("Send Event Loop Started")
-			case STOPPING:
-				mb.log.Debug("Send Event Loop Stopping")
-				sendProc.markStopped()
-			}
-		case batch := <-mb.output:
-			mb.sendBatch(batch)
 		}
 	}
 }

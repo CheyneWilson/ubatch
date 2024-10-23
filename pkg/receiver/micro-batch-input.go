@@ -48,6 +48,8 @@ type InputReceiver[T any] struct {
 
 	control inputReceiverControl
 
+	onEnqueue func(queueLength int)
+
 	log *slog.Logger
 }
 
@@ -106,7 +108,12 @@ func (input *InputReceiver[T]) inputReceiverLoop() {
 			input.muPending.Unlock()
 			input.muQueue.Lock()
 			*input.queue = append(*input.queue, item)
+			qLen := len(*input.queue)
 			input.muQueue.Unlock()
+
+			if input.onEnqueue != nil {
+				input.onEnqueue(qLen)
+			}
 		}
 	}
 }
@@ -152,8 +159,8 @@ func (input *InputReceiver[T]) PrepareBatch() []T {
 	return batch
 }
 
-// queueLen returns the current number of items on the queue
-func (input *InputReceiver[T]) queueLen() int {
+// QueueLen returns the current number of items on the queue
+func (input *InputReceiver[T]) QueueLen() int {
 	input.muQueue.RLock()
 	defer input.muQueue.RUnlock()
 	return len(*input.queue)
@@ -162,7 +169,7 @@ func (input *InputReceiver[T]) queueLen() int {
 // New creates a new InputReceiver
 //
 // logger - optional
-func New[T any](opts InputOptions, logger *slog.Logger) InputReceiver[T] {
+func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLength int)) InputReceiver[T] {
 	queue := make([]T, 0, opts.QueueLength)
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
@@ -182,5 +189,6 @@ func New[T any](opts InputOptions, logger *slog.Logger) InputReceiver[T] {
 			stopReceiver:    make(chan bool),
 			receiverStopped: make(chan bool),
 		},
+		onEnqueue: onEnqueue,
 	}
 }

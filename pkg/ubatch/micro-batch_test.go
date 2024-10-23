@@ -1,19 +1,32 @@
 package ubatch
 
 import (
-	"cheyne.nz/ubatch/internal/mock"
-	. "cheyne.nz/ubatch/pkg/ubatch/types"
-	"cheyne.nz/ubatch/test/util/perf/feeder"
+	. "cheyne.nz/ubatch/common/types"
 	"github.com/stretchr/testify/assert"
+	"internal/feeder"
+	"internal/mock/batch-processor/echo"
+	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func configureLogger() *slog.Logger {
+	opts := &slog.HandlerOptions{
+		// Note: Debug logging can be enabled by simply uncommenting the below line
+		Level: slog.LevelDebug,
+	}
+	handler := slog.NewTextHandler(os.Stdout, opts)
+	return slog.New(handler)
+}
+
+var logger = configureLogger()
+
 // TestMicroBatcher_EndToEnd_Single checks that the Job sent to the MicroBatcher returns a Result
 func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[string](0)
+	var batchProcessor = echo.NewEchoService[string](0)
 	microBatcher := NewMicroBatcher[string, string](DefaultConfig, &batchProcessor, logger)
 	microBatcher.Start()
 	j := Job[string]{
@@ -27,7 +40,7 @@ func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
 }
 
 func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[int](0)
+	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
@@ -43,9 +56,10 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 }
 
 func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[int](0)
+	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
-	conf.Batch.Interval = 10 * time.Millisecond
+	//conf.Batch.Interval = 10 * time.Millisecond
+	conf.Batch.Interval = 5 * time.Second
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
@@ -72,25 +86,25 @@ func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 // TestMicroBatcher_SingleUser_NoTriggerInterval tests that the micro-batcher does not send jobs to the BatchProcessor
 // when the Batch Interval is 0. It also tests that the Result is returned successfully during a graceful Shutdown.
 func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[string](0)
+	var batchProcessor = echo.NewEchoService[string](0)
 
 	conf := DefaultConfig
+	// TODO: Add a test when Threshold is 0, it should just work
+	conf.Batch.Threshold = 10
 	conf.Batch.Interval = 0
 
 	microBatcher := NewMicroBatcher[string, string](conf, &batchProcessor, logger)
 	microBatcher.Start()
-	j := Job[string]{
-		Data: "Hello",
-		Id:   1,
-	}
 
-	c := make(chan Result[string], 1)
+	res := make(chan Result[string], 1)
 	go func() {
-		c <- microBatcher.Submit(j)
+		j := Job[string]{Id: 1, Data: "Hello"}
+		res <- microBatcher.Submit(j)
 	}()
+
 	t.Log("Waiting 10 seconds for timeout")
 	select {
-	case <-c:
+	case <-res:
 		t.Fatalf("Result should not be returned. Interval is 0. No batch should be sumbitted.")
 	case <-time.After(10 * time.Second):
 		t.Log("Timeout (as expected) after 10 seconds")
@@ -98,7 +112,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 	}
 	// The micro-batcher should gracefully Shutdown, completing the queued job
 	microBatcher.Shutdown()
-	r := <-c
+	r := <-res
 	assert.Equal(t, "Hello", r.Ok)
 	assert.Equal(t, Id(1), r.Id)
 	assert.Nil(t, r.Err)
@@ -106,7 +120,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 
 // TestMicroBatcher_SingleUser_Threshold tests that a micro-batch is sent when the input queue Threshold is reached.
 func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[int](0)
+	var batchProcessor = echo.NewEchoService[int](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
@@ -149,7 +163,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 		go func() {
 			job := jobs.Feed()
 			r := microBatcher.Submit(job)
-			assert.Equal(t, 0, len(*microBatcher.input.queue))
+			assert.Equal(t, 0, microBatcher.input.QueueLen())
 			assert.Equal(t, job.Data, r.Ok)
 			assert.Equal(t, job.Id, r.Id)
 			assert.Nil(t, r.Err)
@@ -170,7 +184,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 // TestMicroBatcher_MultiUser_Threshold that a micro-batch is sent when the input queue Threshold is reached
 // during a highly-concurrent use case.
 func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
-	var batchProcessor = mock.NewEchoService[int](0)
+	var batchProcessor = echo.NewEchoService[int](0)
 
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
@@ -200,7 +214,7 @@ func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
 	// Note, we cannot use a wait group directly as the Submit job is synchronous
 	// There will be some queued jobs because threshold has not been reached for the final batch
 	// shutting down microBatcher will trigger final batch to be sent
-	qLen := microBatcher.input.queueLen()
+	qLen := microBatcher.input.QueueLen()
 	t.Log("Outstanding items in queue", "queue length", qLen)
 	microBatcher.Shutdown()
 

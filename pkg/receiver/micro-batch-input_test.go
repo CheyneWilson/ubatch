@@ -3,7 +3,7 @@ package receiver
 import (
 	. "cheyne.nz/ubatch/common/types"
 	"github.com/stretchr/testify/assert"
-	"internal/test/util/perf/feeder"
+	"internal/feeder"
 	"log/slog"
 	"os"
 	"sync"
@@ -39,7 +39,7 @@ func (input *InputReceiver[T]) waitForPending() {
 // TestInputReceiver_SingleUser_Submit tests the job Submit method and receive process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -47,20 +47,20 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.flushPending()
-	assert.Equal(t, 100, inputReceiver.queueLen())
+	assert.Equal(t, 100, inputReceiver.QueueLen())
 
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.flushPending()
-	assert.Equal(t, 200, inputReceiver.queueLen())
+	assert.Equal(t, 200, inputReceiver.QueueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 1000; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
 	inputReceiver.flushPending()
-	assert.Equal(t, 1200, inputReceiver.queueLen())
+	assert.Equal(t, 1200, inputReceiver.QueueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 10000; i++ {
@@ -68,7 +68,7 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	}
 	inputReceiver.flushPending()
 
-	assert.Equal(t, 11200, inputReceiver.queueLen())
+	assert.Equal(t, 11200, inputReceiver.QueueLen())
 	// The queue should contain sequential jobs from 1 to 11200
 	for i := 0; i < 11200; i++ {
 		expected := i
@@ -80,7 +80,7 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 // TestInputReceiver_MultiUser_Submit tests the job Submit method and receive process for multiple concurrent consumers
 func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -99,7 +99,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 
 	set := make(map[Id]bool)
 
-	assert.Equal(t, 100000, inputReceiver.queueLen())
+	assert.Equal(t, 100000, inputReceiver.QueueLen())
 
 	// There should be 100,000 jobs with unique IDs
 	for i := 0; i < len(*inputReceiver.queue); i++ {
@@ -116,7 +116,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 // TestInputReceiver_SingleUser_PrepareBatch
 func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -138,7 +138,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	}
 	inputReceiver.waitForPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
-	assert.Equal(t, inputReceiver.queueLen(), 0)
+	assert.Equal(t, inputReceiver.QueueLen(), 0)
 	assert.Equal(t, len(jobsBatch2), 100)
 
 	const idOffset = 100
@@ -153,7 +153,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 // batch could vary depending on the contents of the queue when PrepareBatch triggers
 func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -194,7 +194,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 // TestInputReceiver_MultiUser_Concurrent_PrepareBatch verifies that
 func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
@@ -250,7 +250,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 
 func TestInputReceiver_nilLogger(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, nil)
+	var inputReceiver = New[Job[int]](conf, nil, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 	_ = inputReceiver.Submit(jobs.Feed())
@@ -263,7 +263,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 // It also tests the ErrJobRefused behaviour
 func TestInputReceiver_StopStart(t *testing.T) {
 	var conf = DefaultConfig
-	var inputReceiver = New[Job[int]](conf, logger)
+	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 
 	// If the inputReceiver has not been started, it should refuse jobs
@@ -304,3 +304,5 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	err = inputReceiver.Submit(jobs.Feed())
 	assert.Equal(t, ErrJobRefused, err)
 }
+
+// TODO: include basic test for the onEnqueue

@@ -1,0 +1,9 @@
+go 1.23
+
+use (
+	pkg/common
+	pkg/receiver
+	pkg/ubatch
+	internal/mock/batch-processor
+	internal/perf
+)
