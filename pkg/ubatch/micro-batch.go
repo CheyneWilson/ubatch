@@ -45,6 +45,9 @@ type eventChannels struct {
 	inputThreshold chan QueueThresholdEvent
 }
 
+// preWait initializes the response channel for a Job/Result pair
+//
+// This channel must be initialized before either wait() or unWait() is called.
 func (mb *MicroBatcher[_, T]) preWait(id Id) {
 	c := make(chan any, 1)
 	_, loaded := mb.event.recv.LoadOrStore(id, c)
@@ -81,8 +84,10 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	}
 }
 
+// stopPeriodic stops the periodicBatchTriggerLoop if it is running
+//
+// The periodicBatchTriggerLoop will not have been initially started when if the Batch interval is 0.
 func (mb *MicroBatcher[T, R]) stopPeriodic() {
-	// the periodic batch loop does not run if the interval is 0.
 	select {
 	case mb.control.stopPeriodic <- true:
 		<-mb.control.periodicStopped
@@ -90,8 +95,11 @@ func (mb *MicroBatcher[T, R]) stopPeriodic() {
 	}
 }
 
-// gracefully
-func (mb *MicroBatcher[T, R]) stopSend() {
+// stopSend gracefully shuts down the sendBatchLoop
+//
+// To ensure that all outstanding jobs are processed, stop or flush the input receiver first.
+// See the Shutdown method for details
+func (mb *MicroBatcher[_, _]) stopSend() {
 	mb.control.stopSend <- true
 	<-mb.control.sendStopped
 }
@@ -105,11 +113,11 @@ func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.input.Stop()
 	mb.log.Debug("Remaining input items", "Count", mb.input.QueueLen())
 	mb.stopPeriodic()
-
 	mb.stopSend()
 }
 
-func (mb *MicroBatcher[_, R]) addResult(result Result[R]) {
+// handleResult adds a result to the response map and signals the result is available
+func (mb *MicroBatcher[_, R]) handleResult(result Result[R]) {
 	mb.responseMu.Lock()
 	mb.response[result.Id] = result
 	mb.responseMu.Unlock()
@@ -120,7 +128,9 @@ type QueueThresholdEvent struct {
 	queueLength int
 }
 
-// inputQueueThreshold
+// inputQueueThreshold returns a function which emits QueueThresholdEvent whenever the queue length exceeds a threshold
+//
+// It is used as a hook for the input receiver
 func inputQueueThreshold(threshold int, evt *chan any) func(queueLength int) {
 	return func(queueLength int) {
 		if queueLength >= threshold {
@@ -166,9 +176,8 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 // Start the batch processor
 func (mb *MicroBatcher[_, _]) Start() {
 	mb.input.Start()
-	go mb.sendBatchEventLoop()
+	go mb.sendBatchLoop()
 	go mb.periodicBatchTriggerLoop()
-
 }
 
 // sendBatch sends a batch of Jobs to the BatchProcessor
@@ -179,7 +188,7 @@ func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 		mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
 		res := (*mb.BatchProcessor).Process(batch)
 		for i := 0; i < len(res); i++ {
-			mb.addResult(res[i])
+			mb.handleResult(res[i])
 		}
 	} else {
 		mb.log.Debug("No batch jobs. Skipping send ")
@@ -200,7 +209,7 @@ func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 	}
 }
 
-// periodicBatchTriggerLoop periodically sends messages to the event.send channel to trigger a batch of jobs to be processed
+// periodicBatchTriggerLoop periodically sends a message to the event.send channel to trigger a batch of jobs to be processed
 //
 // The frequency depends on config.Batch.Interval. If this is 0, then no periodic messages are sent.
 func (mb *MicroBatcher[_, _]) periodicBatchTriggerLoop() {
@@ -228,7 +237,10 @@ func (mb *MicroBatcher[_, _]) periodicBatchTriggerLoop() {
 	}
 }
 
-func (mb *MicroBatcher[_, _]) sendBatchEventLoop() {
+// sendBatchLoop sends micro-batches to the batch processor
+//
+// This is triggered whenever an event is sent to the event.send channel.
+func (mb *MicroBatcher[_, _]) sendBatchLoop() {
 	for {
 		select {
 		case <-mb.control.stopSend:
@@ -240,6 +252,7 @@ func (mb *MicroBatcher[_, _]) sendBatchEventLoop() {
 			mb.control.sendStopped <- true
 			return
 		case <-mb.event.send:
+			// don't bother trying to send an empty batch
 			if mb.input.QueueLen() > 0 {
 				batch := mb.input.PrepareBatch()
 				mb.sendBatch(batch)

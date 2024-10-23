@@ -68,16 +68,16 @@ The `mock.NewEchoService` returns the `Job` `Data` sent to it as `Result` `OK` m
 package main
 
 import (
-	"cheyne.nz/ubatch/internal/mock"
-	"cheyne.nz/ubatch/pkg/ubatch"
-	"cheyne.nz/ubatch/pkg/ubatch/types"
+	"cheyne.nz/ubatch"
+	"cheyne.nz/ubatch/common/types"
 	"fmt"
+	"internal/mock/echo-batch-processor"
 	"log/slog"
 )
 
 func main() {
 	log := slog.Default()
-	batchProcessor := mock.NewEchoService[string](0)
+	batchProcessor := echo.NewEchoService[string](0)
 	microBatcher := ubatch.NewMicroBatcher(ubatch.DefaultConfig, &batchProcessor, log)
 	microBatcher.Start()
 	job := types.Job[string]{Data: "Hello", Id: 1}
@@ -85,7 +85,6 @@ func main() {
 	fmt.Printf("Got result: %+v\n", r)
 	microBatcher.Shutdown()
 }
-
 ```
 
 See further examples [here](example).
@@ -97,22 +96,18 @@ shown below.
 
 ```go
 UConfig{
-	Batch: BatchTriggerOptions{
-		// Trigger a micro-batch whenever the input queue reaches this length
-		Threshold: 0,
-		// Trigger a micro-batch periodically at this Interval if the input queue length is 1 or more.
-		Interval: 1 * time.Second,
-	},
-	Input: InputOptions{
-		ChannelOptions{
-			// The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
-			1,
-		},
-		QueueOptions{
-			// Default size for the input receiver queue. The queue will grow automatically as necessary.
-			Size: 16,
-		},
-	},
+    Batch: BatchTriggerOptions{
+        // Trigger a micro-batch whenever the input queue reaches this length
+        Threshold: 10,
+        // Trigger a micro-batch periodically at this Interval if the input queue length is 1 or more.
+        Interval: 1 * time.Second,
+    },
+    Input: receiver.InputOptions{
+        // The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
+        ChannelLength: 1,
+        // Default size for the input receiver queue. The queue will grow automatically as necessary.
+        QueueLength: 16,
+    },
 }
 ```
 
@@ -121,7 +116,6 @@ UConfig{
 Tests can be run via your IDE or on the command line as follows.
 
 ```sh
-sh
 cd pkg/ubatch
 go test
 ```
@@ -140,16 +134,6 @@ The roadmap of contains possible future enhancements / next steps for this libra
 
 There are currently no plans to publish this package. It was created as an exercise and for fun.
 
-## Split InputReceiver and MicroBatcher into separate modules
-
-The `MicroBatcher` and `InputReceiver` are configured slightly differently. The `InputReceiver` uses `IRInputOptions`
-which contains the `Threshold` setting which triggers events when the input queue reaches that length.
-The corresponding `Threshold` setting for `MicroBatcher` is configured in `BatchOptions`. `MicroBatcher` does not
-use `IRInputOptions`, instead preferring the struct `InputOptions` so to avoid having the `Threshold` set in two places.
-
-The `InputReceiver` and its `IRInputOptions` public. They should be moved to their own module so that this becomes an
-implementation detail, and not part of the MicroBatcher API.
-
 ## Handling for Duplicate job IDs
 
 The library assumes that each submitted job has a unique ID. To improve the API for consumers, ensure that the library
@@ -159,7 +143,7 @@ occurs.
 ## Make InputReceiver and MicroBatcher reconfigurable
 
 Currently, these components are configured when they are created. A small improvement would be to allow their config to
-to be dynamically changed.
+be dynamically changed.
 
 ## Further mock Batch Processors (to aid testing)
 

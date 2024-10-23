@@ -4,7 +4,7 @@ import (
 	. "cheyne.nz/ubatch/common/types"
 	"github.com/stretchr/testify/assert"
 	"internal/feeder"
-	"internal/mock/batch-processor/echo"
+	"internal/mock/echo-batch-processor"
 	"log/slog"
 	"os"
 	"sync"

@@ -13,13 +13,13 @@ type UConfig struct {
 
 // BatchTriggerOptions are used to configuring when MicroBatcher sends new to the BatchProcessor
 type BatchTriggerOptions struct {
-	// When the input queue length reaches the Threshold, a new micro-batch is created.
-	// If this Threshold is 0 or less, the trigger is disabled.
+	// When the input queue length reaches the Threshold a new micro-batch is created.
+	// If this Threshold is 0 then batches are sent automatically
+	// If this Threshold is less than 0, the trigger is disabled.
 	Threshold int
 
-	// A new micro-batch is created periodically at the specified Interval.
-	// If queue length is 0 at the time of triggering then no batch is sent (it would be empty).
-	// If this Interval is 0 or less, the trigger is disabled.
+	// If  Interval is greater than 0, a new micro-batch is triggered periodically at the specified Interval.
+	// If the size of the batch is 0 then no batch is sent as it would be empty.
 	Interval time.Duration
 }
 
@@ -34,7 +34,6 @@ var DefaultConfig = UConfig{
 		// Trigger a micro-batch periodically at this Interval if the input queue length is 1 or more.
 		Interval: 1 * time.Second,
 	},
-
 	Input: receiver.InputOptions{
 		// The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
 		ChannelLength: 1,
