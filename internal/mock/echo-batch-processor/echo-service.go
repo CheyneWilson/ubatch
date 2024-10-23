@@ -1,7 +1,7 @@
-package mock
+package echo
 
 import (
-	. "cheyne.nz/ubatch/pkg/ubatch/types"
+	. "cheyne.nz/ubatch/common/types"
 	"time"
 )
 
@@ -12,7 +12,7 @@ type EchoService[T any, R any] struct {
 	delay time.Duration
 }
 
-// NewEchoService constructs a new EchoService.
+// New constructs a new EchoService.
 func NewEchoService[T any](delay time.Duration) BatchProcessor[T, T] {
 	return &EchoService[T, T]{
 		delay: delay,

@@ -1,0 +1,11 @@
+go 1.23
+
+use (
+	example
+	pkg/common
+	pkg/receiver
+	pkg/ubatch
+	internal/documentation
+	internal/mock
+	internal/feeder
+)

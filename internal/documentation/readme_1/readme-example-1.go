@@ -1,16 +1,16 @@
 package main
 
 import (
-	"cheyne.nz/ubatch/internal/mock"
-	"cheyne.nz/ubatch/pkg/ubatch"
-	"cheyne.nz/ubatch/pkg/ubatch/types"
+	"cheyne.nz/ubatch"
+	"cheyne.nz/ubatch/common/types"
 	"fmt"
+	"internal/mock/echo-batch-processor"
 	"log/slog"
 )
 
 func main() {
 	log := slog.Default()
-	batchProcessor := mock.NewEchoService[string](0)
+	batchProcessor := echo.NewEchoService[string](0)
 	microBatcher := ubatch.NewMicroBatcher(ubatch.DefaultConfig, &batchProcessor, log)
 	microBatcher.Start()
 	job := types.Job[string]{Data: "Hello", Id: 1}
