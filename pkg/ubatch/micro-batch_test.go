@@ -16,7 +16,7 @@ import (
 func configureLogger() *slog.Logger {
 	opts := &slog.HandlerOptions{
 		// Note: Debug logging can be enabled by simply uncommenting the below line
-		Level: slog.LevelDebug,
+		// Level: slog.LevelDebug,
 	}
 	handler := slog.NewTextHandler(os.Stdout, opts)
 	return slog.New(handler)

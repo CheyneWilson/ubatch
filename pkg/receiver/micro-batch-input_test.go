@@ -104,7 +104,6 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 	// There should be 100,000 jobs with unique IDs
 	for i := 0; i < len(*inputReceiver.queue); i++ {
 		id := (*inputReceiver.queue)[i].Id
-		//fmt.Fprintf(os.Stdout, "id is %d\n", id)
 		if set[id] != true {
 			set[id] = true
 		} else {
@@ -242,7 +241,6 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 			} else {
 				t.Fatalf("Duplicate Job/Result Id '%d'", job.Id)
 			}
-
 		}
 	}
 	assert.Equal(t, totalJobs, 100000)

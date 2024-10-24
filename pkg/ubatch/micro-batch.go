@@ -27,12 +27,9 @@ type MicroBatcher[T, R any] struct {
 	input    receiver.InputReceiver[Job[T]]
 	response sync.Map
 
+	event   eventChannels
 	control processControls
-
-	output chan []Job[T]
-	event  eventChannels
-
-	log *slog.Logger
+	log     *slog.Logger
 }
 
 type eventChannels struct {
@@ -167,9 +164,7 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 		event: eventChannels{
 			send: sendChan,
 		},
-		// the output channel buffers the jobs being sent to the BatchProcessor
-		output: make(chan []Job[T], 1),
-		log:    logger,
+		log: logger,
 	}
 }
 
