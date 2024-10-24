@@ -27,7 +27,7 @@ var logger = configureLogger()
 // TestMicroBatcher_EndToEnd_Single checks that the Job sent to the MicroBatcher returns a Result
 func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[string](0)
-	microBatcher := NewMicroBatcher[string, string](DefaultConfig, &batchProcessor, logger)
+	microBatcher := New[string, string](DefaultConfig, &batchProcessor, logger)
 	microBatcher.Start()
 	j := Job[string]{
 		Data: "Hello",
@@ -43,7 +43,7 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 	for i := 0; i < 10; i++ {
@@ -60,7 +60,7 @@ func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 	conf := DefaultConfig
 	//conf.Batch.Interval = 10 * time.Millisecond
 	conf.Batch.Interval = 5 * time.Second
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 
@@ -93,7 +93,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 	conf.Batch.Threshold = 10
 	conf.Batch.Interval = 0
 
-	microBatcher := NewMicroBatcher[string, string](conf, &batchProcessor, logger)
+	microBatcher := New[string, string](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	res := make(chan Result[string], 1)
@@ -125,7 +125,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
 	conf.Batch.Threshold = 5
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()
@@ -194,7 +194,7 @@ func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
 	userSemaphore := make(chan any, maxConcurrentUserCount)
 	assert.Greater(t, maxConcurrentUserCount, conf.Batch.Threshold)
 
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()

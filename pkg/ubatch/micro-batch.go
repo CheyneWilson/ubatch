@@ -126,7 +126,7 @@ func (mb *MicroBatcher[_, R]) handleResult(result Result[R]) {
 	mb.unWait(result.Id)
 }
 
-func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
+func New[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)

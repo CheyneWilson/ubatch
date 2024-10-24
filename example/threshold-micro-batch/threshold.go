@@ -19,7 +19,7 @@ func main() {
 	conf.Batch.Threshold = 8
 	conf.Batch.Interval = 0
 
-	microBatcher := ubatch.NewMicroBatcher[int, int](conf, &batchProcessor, log)
+	microBatcher := ubatch.New[int, int](conf, &batchProcessor, log)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 

@@ -19,7 +19,7 @@ func main() {
 	conf.Batch.Threshold = 0
 	conf.Batch.Interval = 100 * time.Millisecond
 
-	microBatcher := ubatch.NewMicroBatcher[int, int](conf, &batchProcessor, log)
+	microBatcher := ubatch.New[int, int](conf, &batchProcessor, log)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 
