@@ -40,7 +40,7 @@ type eventChannels struct {
 	recv sync.Map
 
 	// inputThreshold receives an event when the threshold is reached
-	inputThreshold chan QueueThresholdEvent
+	inputThreshold chan receiver.QueueThresholdEvent
 }
 
 // preWait initializes the response channel for a Job/Result pair
@@ -126,21 +126,6 @@ func (mb *MicroBatcher[_, R]) handleResult(result Result[R]) {
 	mb.unWait(result.Id)
 }
 
-type QueueThresholdEvent struct {
-	queueLength int
-}
-
-// inputQueueThreshold returns a function which emits QueueThresholdEvent whenever the queue length exceeds a threshold
-//
-// It is used as a hook for the input receiver
-func inputQueueThreshold(threshold int, evt *chan any) func(queueLength int) {
-	return func(queueLength int) {
-		if queueLength >= threshold {
-			*evt <- QueueThresholdEvent{queueLength}
-		}
-	}
-}
-
 func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
@@ -149,7 +134,7 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 	}
 
 	sendChan := make(chan any, 10)
-	thresholdReached := inputQueueThreshold(conf.Batch.Threshold, &sendChan)
+	thresholdReached := receiver.NewQueueThresholdHook(conf.Batch.Threshold, &sendChan)
 
 	return MicroBatcher[T, R]{
 		config:         conf,

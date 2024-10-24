@@ -198,3 +198,15 @@ func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLeng
 		onEnqueue: onEnqueue,
 	}
 }
+
+type QueueThresholdEvent struct{ queueLength int }
+
+// NewQueueThresholdHook returns a function which emits QueueThresholdEvent to the provided channel whenever the queue
+// length equals or exceeds the threshold. It is intended for use with the onEnqueue hook.
+func NewQueueThresholdHook(threshold int, evt *chan any) func(queueLength int) {
+	return func(queueLength int) {
+		if queueLength == threshold {
+			*evt <- QueueThresholdEvent{queueLength}
+		}
+	}
+}
