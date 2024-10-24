@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync"
 	"testing"
-	"time"
 )
 
 func configureLogger() *slog.Logger {
@@ -21,20 +20,6 @@ func configureLogger() *slog.Logger {
 }
 
 var logger = configureLogger()
-
-// waitForPending returns when where are no more items in pending in the receiver channel.
-// Calling Stop, waitForPending, and PrepareBatch sequentially will ensure all inputted items are returned.
-func (input *InputReceiver[T]) waitForPending() {
-	for {
-		input.muPending.RLock()
-		p := input.pending
-		input.muPending.RUnlock()
-		if p == 0 {
-			break
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-}
 
 // TestInputReceiver_SingleUser_Submit tests the job Submit method and receive process for a single consumer
 func TestInputReceiver_SingleUser_Submit(t *testing.T) {
@@ -95,7 +80,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 
 	set := make(map[Id]bool)
 
@@ -122,7 +107,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 	jobsBatch1 := inputReceiver.PrepareBatch()
 	assert.Equal(t, len(*inputReceiver.queue), 0)
 	assert.Equal(t, len(jobsBatch1), 100)
@@ -135,7 +120,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_ = inputReceiver.Submit(jobs.Feed())
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
 	assert.Equal(t, inputReceiver.QueueLen(), 0)
 	assert.Equal(t, len(jobsBatch2), 100)
@@ -165,7 +150,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 			batches = append(batches, b)
 		}
 	}
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 	expectedBatchCount := 10
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
@@ -219,7 +204,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
 	// last of the pending items (it's only 1 because Submit is a synchronous call)
@@ -252,7 +237,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 	_ = inputReceiver.Submit(jobs.Feed())
-	inputReceiver.waitForPending()
+	inputReceiver.flushPending()
 	jobsBatch := inputReceiver.PrepareBatch()
 	assert.Equal(t, jobsBatch[0].Id, Id(0))
 }
