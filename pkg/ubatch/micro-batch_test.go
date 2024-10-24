@@ -144,7 +144,6 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 			}()
 		}
 		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Submit method call to complete
-
 		t.Log("Waiting for 5 seconds")
 		select {
 		case <-time.After(5 * time.Second):
@@ -153,7 +152,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 		}
 
 		// queue size should equal the number of submitted jobs
-		//assert.Equal(t, 4, len(*microBatcher.input.queue))
+		assert.Equal(t, 4, microBatcher.input.QueueLen())
 
 		// Submitting the 5th job causes the input Threshold to be reached, triggering a new micro-batch
 		// All outstanding jobs should complete

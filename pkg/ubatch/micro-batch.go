@@ -3,6 +3,8 @@ package ubatch
 import (
 	. "cheyne.nz/ubatch/common/types"
 	"cheyne.nz/ubatch/receiver"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -21,11 +23,9 @@ type processControls struct {
 type MicroBatcher[T, R any] struct {
 	config         UConfig
 	BatchProcessor *BatchProcessor[T, R]
-	input          receiver.InputReceiver[Job[T]]
 
-	// TODO: would a sync.Map be better? We would want to measure the performance
-	response   map[Id]Result[R]
-	responseMu sync.Mutex
+	input    receiver.InputReceiver[Job[T]]
+	response sync.Map
 
 	control processControls
 
@@ -66,11 +66,15 @@ func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
 	}
-	mb.responseMu.Lock()
-	res := mb.response[id]
-	delete(mb.response, id)
-	mb.responseMu.Unlock()
-	return res
+
+	res, ok := mb.response.LoadAndDelete(id)
+	if ok {
+		return res.(Result[T])
+	} else {
+		return Result[T]{
+			Err: errors.New(fmt.Sprintf("Result not found for ID: '%d'", id)),
+		}
+	}
 }
 
 // unWait is used to signal to the Submit method that the Result is available in the response map given Job ID
@@ -114,13 +118,12 @@ func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.log.Debug("Remaining input items", "Count", mb.input.QueueLen())
 	mb.stopPeriodic()
 	mb.stopSend()
+
 }
 
 // handleResult adds a result to the response map and signals the result is available
 func (mb *MicroBatcher[_, R]) handleResult(result Result[R]) {
-	mb.responseMu.Lock()
-	mb.response[result.Id] = result
-	mb.responseMu.Unlock()
+	mb.response.Store(result.Id, result)
 	mb.unWait(result.Id)
 }
 
@@ -164,9 +167,6 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 		event: eventChannels{
 			send: sendChan,
 		},
-		// the response channel handles the results returned from the BatchProcessor
-		response: make(map[Id]Result[R]),
-
 		// the output channel buffers the jobs being sent to the BatchProcessor
 		output: make(chan []Job[T], 1),
 		log:    logger,
