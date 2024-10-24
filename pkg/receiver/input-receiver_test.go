@@ -1,7 +1,7 @@
 package receiver
 
 import (
-	. "cheyne.nz/ubatch/common/types"
+	. "cheyne.nz/ubatch/types"
 	"github.com/stretchr/testify/assert"
 	"internal/feeder"
 	"log/slog"

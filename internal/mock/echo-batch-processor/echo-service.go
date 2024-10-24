@@ -1,7 +1,7 @@
 package echo
 
 import (
-	. "cheyne.nz/ubatch/common/types"
+	. "cheyne.nz/ubatch/types"
 	"time"
 )
 

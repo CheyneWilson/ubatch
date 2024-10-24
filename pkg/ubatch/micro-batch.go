@@ -1,8 +1,8 @@
 package ubatch
 
 import (
-	. "cheyne.nz/ubatch/common/types"
 	"cheyne.nz/ubatch/receiver"
+	. "cheyne.nz/ubatch/types"
 	"errors"
 	"fmt"
 	"io"
