@@ -24,8 +24,9 @@ type MicroBatcher[T, R any] struct {
 	config         UConfig
 	BatchProcessor *BatchProcessor[T, R]
 
-	input    receiver.InputReceiver[Job[T]]
-	response sync.Map
+	input      receiver.InputReceiver[Job[T]]
+	response   sync.Map
+	wgResponse sync.WaitGroup
 
 	event   eventChannels
 	control processControls
@@ -80,6 +81,7 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	if ok {
 		mb.log.Debug("loaded recv channel", "JobId", id)
 		recv.(chan any) <- uEvent{}
+		mb.wgResponse.Done()
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
 	}
@@ -115,7 +117,7 @@ func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.log.Debug("Remaining input items", "Count", mb.input.QueueLen())
 	mb.stopPeriodic()
 	mb.stopSend()
-
+	mb.wgResponse.Wait()
 }
 
 // handleResult adds a result to the response map and signals the result is available
@@ -181,6 +183,7 @@ func (mb *MicroBatcher[_, _]) Start() {
 func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 	if len(batch) > 0 {
 		mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
+		mb.wgResponse.Add(len(batch))
 		res := (*mb.BatchProcessor).Process(batch)
 		for i := 0; i < len(res); i++ {
 			mb.handleResult(res[i])

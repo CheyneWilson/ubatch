@@ -186,37 +186,41 @@ func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 
 	conf := DefaultConfig
-	conf.Batch.Interval = 0
+	conf.Batch.Interval = 5 * time.Second
 	conf.Batch.Threshold = 37
+
+	// If the number of users isn't greater than the threshold, then only the periodic trigger will operate
+	maxConcurrentUserCount := 100
+	userSemaphore := make(chan any, maxConcurrentUserCount)
+	assert.Greater(t, maxConcurrentUserCount, conf.Batch.Threshold)
 
 	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()
-
 	var total atomic.Int32
 
-	for j := 0; j < 100; j++ {
-		for i := 0; i < 100; i++ {
-			go func() {
-				job := jobs.Feed()
-				r := microBatcher.Submit(job)
-				assert.Equal(t, job.Data, r.Ok)
-				assert.Equal(t, job.Id, r.Id)
-				assert.Nil(t, r.Err)
-				total.Add(1)
-			}()
-		}
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < 10000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			userSemaphore <- true
+			job := jobs.Feed()
+			r := microBatcher.Submit(job)
+			assert.Nil(t, r.Err)
+			assert.Equal(t, job.Data, r.Ok)
+			assert.Equal(t, job.Id, r.Id)
+			total.Add(1)
+			<-userSemaphore
+		}()
 	}
 
-	time.Sleep(5 * time.Second)
-	// Note, we cannot use a wait group directly as the Submit job is synchronous
-	// There will be some queued jobs because threshold has not been reached for the final batch
-	// shutting down microBatcher will trigger final batch to be sent
+	wg.Wait()
 	qLen := microBatcher.input.QueueLen()
 	t.Log("Outstanding items in queue", "queue length", qLen)
 	microBatcher.Shutdown()
 
-	time.Sleep(5 * time.Second)
 	assert.Equal(t, 10000, int(total.Load()))
 }
