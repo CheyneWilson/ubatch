@@ -20,7 +20,12 @@ const (
 	STOPPING state = iota
 )
 
-// inputReceiverControl contains state of the InputReceiver and signal channels to coordinate synchronous actions
+// inputReceiverControl contains the state of the InputReceiver and signal channels to coordinate synchronous actions
+//
+// Sending a message to stopReceiver gracefully shuts down the inputReceiverLoop.
+// After the inputReceiverLoop is stopped a message is sent to the receiverStopped channel.
+// Sending a message to the flushPending channel triggers all buffered items to be queued.
+// After the receiver is flushed a message is sent to the pendingFlushed channel.
 type inputReceiverControl struct {
 	state           state
 	stopReceiver    chan bool
@@ -32,12 +37,12 @@ type inputReceiverControl struct {
 // The InputReceiver supports multiple processes submitting Jobs simultaneously.
 // Jobs are transferred from the receiver channel to the queue.
 type InputReceiver[T any] struct {
-	// The receiver buffers incoming Jobs before they are added to the queue
-	receiver chan T
-
 	// if accept is false, any items submitted are rejected with a ErrJobRefused
 	accept   bool
 	muAccept sync.RWMutex
+
+	// The receiver buffers incoming Jobs before they are added to the queue
+	receiver chan T
 
 	// pending is the number of incoming Jobs which have not yet been transferred from receiver to the queue
 	pending   int
@@ -48,14 +53,15 @@ type InputReceiver[T any] struct {
 
 	control inputReceiverControl
 
+	// onEnqueue hook is called every time a new item is added to the queue
 	onEnqueue func(queueLength int)
 
 	log *slog.Logger
 }
 
-// Submit an item to the InputReceiver.
+// Add an item to the InputReceiver.
 // This method safe for concurrent use by multiple goroutines.
-func (input *InputReceiver[T]) Submit(item T) error {
+func (input *InputReceiver[T]) Add(item T) error {
 	input.muAccept.RLock()
 	defer input.muAccept.RUnlock()
 	if input.accept {
@@ -82,7 +88,7 @@ func (input *InputReceiver[T]) flushPendingItems() {
 	input.muPending.Unlock()
 }
 
-// flushPending is primarily used for testing to ensure
+// flushPending is primarily used for testing to checkpoint various states
 func (input *InputReceiver[T]) flushPending() {
 	input.control.flushPending <- true
 	<-input.control.pendingFlushed
@@ -146,6 +152,7 @@ func (input *InputReceiver[T]) Stop() {
 }
 
 // PrepareBatch creates a batch with all items from the InputReceiver and resets it to an empty state
+// This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) PrepareBatch() []T {
 	input.log.Debug("Preparing batch.")
 	input.muQueue.Lock()
@@ -159,18 +166,30 @@ func (input *InputReceiver[T]) PrepareBatch() []T {
 	return batch
 }
 
-// QueueLen returns the current number of items on the queue
+// QueueLen returns the current number of items on the queue.
+// This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) QueueLen() int {
 	input.muQueue.RLock()
 	defer input.muQueue.RUnlock()
 	return len(*input.queue)
 }
 
+// Total returns the current number of items pending and queued.
+// This method safe for concurrent use by multiple goroutines.
+func (input *InputReceiver[T]) Total() int {
+	input.muQueue.RLock()
+	defer input.muQueue.RUnlock()
+	input.muPending.RLock()
+	defer input.muPending.RUnlock()
+	total := len(*input.queue) + input.pending
+	return total
+}
+
 // New creates a new InputReceiver
 //
 // logger - optional
 func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLength int)) InputReceiver[T] {
-	queue := make([]T, 0, opts.QueueLength)
+	queue := make([]T, 0, opts.QueueSize)
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
@@ -178,7 +197,7 @@ func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLeng
 	}
 
 	return InputReceiver[T]{
-		receiver: make(chan T, opts.ChannelLength),
+		receiver: make(chan T, opts.ChannelSize),
 		queue:    &queue,
 		pending:  0,
 		log:      logger,
@@ -190,5 +209,17 @@ func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLeng
 			receiverStopped: make(chan bool),
 		},
 		onEnqueue: onEnqueue,
+	}
+}
+
+type QueueThresholdEvent struct{ queueLength int }
+
+// NewQueueThresholdHook returns a function which emits QueueThresholdEvent to the provided channel whenever the queue
+// length equals or exceeds the threshold. It is intended for use with the onEnqueue hook.
+func NewQueueThresholdHook(threshold int, evt *chan any) func(queueLength int) {
+	return func(queueLength int) {
+		if queueLength == threshold {
+			*evt <- QueueThresholdEvent{queueLength}
+		}
 	}
 }

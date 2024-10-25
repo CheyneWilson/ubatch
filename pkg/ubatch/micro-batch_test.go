@@ -1,7 +1,7 @@
 package ubatch
 
 import (
-	. "cheyne.nz/ubatch/common/types"
+	. "cheyne.nz/ubatch/types"
 	"github.com/stretchr/testify/assert"
 	"internal/feeder"
 	"internal/mock/echo-batch-processor"
@@ -16,7 +16,7 @@ import (
 func configureLogger() *slog.Logger {
 	opts := &slog.HandlerOptions{
 		// Note: Debug logging can be enabled by simply uncommenting the below line
-		Level: slog.LevelDebug,
+		// Level: slog.LevelDebug,
 	}
 	handler := slog.NewTextHandler(os.Stdout, opts)
 	return slog.New(handler)
@@ -27,7 +27,7 @@ var logger = configureLogger()
 // TestMicroBatcher_EndToEnd_Single checks that the Job sent to the MicroBatcher returns a Result
 func TestMicroBatcher_EndToEnd_Single(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[string](0)
-	microBatcher := NewMicroBatcher[string, string](DefaultConfig, &batchProcessor, logger)
+	microBatcher := New[string, string](DefaultConfig, &batchProcessor, logger)
 	microBatcher.Start()
 	j := Job[string]{
 		Data: "Hello",
@@ -43,7 +43,7 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
 	conf.Batch.Interval = 10 * time.Millisecond
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 	for i := 0; i < 10; i++ {
@@ -58,9 +58,8 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
-	//conf.Batch.Interval = 10 * time.Millisecond
-	conf.Batch.Interval = 5 * time.Second
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	conf.Batch.Interval = 1 * time.Second
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
 
@@ -93,7 +92,7 @@ func TestMicroBatcher_SingleUser_NoTriggerInterval(t *testing.T) {
 	conf.Batch.Threshold = 10
 	conf.Batch.Interval = 0
 
-	microBatcher := NewMicroBatcher[string, string](conf, &batchProcessor, logger)
+	microBatcher := New[string, string](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	res := make(chan Result[string], 1)
@@ -125,7 +124,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 	conf := DefaultConfig
 	conf.Batch.Interval = 0
 	conf.Batch.Threshold = 5
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()
@@ -143,8 +142,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 				assert.Nil(t, r.Err)
 			}()
 		}
-		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Submit method call to complete
-
+		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Add method call to complete
 		t.Log("Waiting for 5 seconds")
 		select {
 		case <-time.After(5 * time.Second):
@@ -153,7 +151,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 		}
 
 		// queue size should equal the number of submitted jobs
-		//assert.Equal(t, 4, len(*microBatcher.input.queue))
+		assert.Equal(t, 4, microBatcher.input.QueueLen())
 
 		// Submitting the 5th job causes the input Threshold to be reached, triggering a new micro-batch
 		// All outstanding jobs should complete
@@ -187,37 +185,41 @@ func TestMicroBatcher_MultiUser_Threshold(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 
 	conf := DefaultConfig
-	conf.Batch.Interval = 0
+	conf.Batch.Interval = 5 * time.Second
 	conf.Batch.Threshold = 37
 
-	microBatcher := NewMicroBatcher[int, int](conf, &batchProcessor, logger)
+	// If the number of users isn't greater than the threshold, then only the periodic trigger will operate
+	maxConcurrentUserCount := 100
+	userSemaphore := make(chan any, maxConcurrentUserCount)
+	assert.Greater(t, maxConcurrentUserCount, conf.Batch.Threshold)
+
+	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 
 	jobs := feeder.NewSequentialJobFeeder()
-
 	var total atomic.Int32
 
-	for j := 0; j < 100; j++ {
-		for i := 0; i < 100; i++ {
-			go func() {
-				job := jobs.Feed()
-				r := microBatcher.Submit(job)
-				assert.Equal(t, job.Data, r.Ok)
-				assert.Equal(t, job.Id, r.Id)
-				assert.Nil(t, r.Err)
-				total.Add(1)
-			}()
-		}
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < 10000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			userSemaphore <- true
+			job := jobs.Feed()
+			r := microBatcher.Submit(job)
+			assert.Nil(t, r.Err)
+			assert.Equal(t, job.Data, r.Ok)
+			assert.Equal(t, job.Id, r.Id)
+			total.Add(1)
+			<-userSemaphore
+		}()
 	}
 
-	time.Sleep(5 * time.Second)
-	// Note, we cannot use a wait group directly as the Submit job is synchronous
-	// There will be some queued jobs because threshold has not been reached for the final batch
-	// shutting down microBatcher will trigger final batch to be sent
+	wg.Wait()
 	qLen := microBatcher.input.QueueLen()
 	t.Log("Outstanding items in queue", "queue length", qLen)
 	microBatcher.Shutdown()
 
-	time.Sleep(5 * time.Second)
 	assert.Equal(t, 10000, int(total.Load()))
 }

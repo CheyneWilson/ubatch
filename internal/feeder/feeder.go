@@ -6,7 +6,7 @@ package feeder
 // See https://docs.gatling.io/reference/script/core/session/feeders/ for more info
 
 import (
-	. "cheyne.nz/ubatch/common/types"
+	. "cheyne.nz/ubatch/types"
 	"slices"
 	"sync/atomic"
 )

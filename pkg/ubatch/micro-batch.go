@@ -1,8 +1,10 @@
 package ubatch
 
 import (
-	. "cheyne.nz/ubatch/common/types"
 	"cheyne.nz/ubatch/receiver"
+	. "cheyne.nz/ubatch/types"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -21,18 +23,14 @@ type processControls struct {
 type MicroBatcher[T, R any] struct {
 	config         UConfig
 	BatchProcessor *BatchProcessor[T, R]
-	input          receiver.InputReceiver[Job[T]]
 
-	// TODO: would a sync.Map be better? We would want to measure the performance
-	response   map[Id]Result[R]
-	responseMu sync.Mutex
+	input      receiver.InputReceiver[Job[T]]
+	response   sync.Map
+	wgResponse sync.WaitGroup
 
+	event   eventChannels
 	control processControls
-
-	output chan []Job[T]
-	event  eventChannels
-
-	log *slog.Logger
+	log     *slog.Logger
 }
 
 type eventChannels struct {
@@ -42,7 +40,7 @@ type eventChannels struct {
 	recv sync.Map
 
 	// inputThreshold receives an event when the threshold is reached
-	inputThreshold chan QueueThresholdEvent
+	inputThreshold chan receiver.QueueThresholdEvent
 }
 
 // preWait initializes the response channel for a Job/Result pair
@@ -66,11 +64,15 @@ func (mb *MicroBatcher[_, T]) wait(id Id) Result[T] {
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
 	}
-	mb.responseMu.Lock()
-	res := mb.response[id]
-	delete(mb.response, id)
-	mb.responseMu.Unlock()
-	return res
+
+	res, ok := mb.response.LoadAndDelete(id)
+	if ok {
+		return res.(Result[T])
+	} else {
+		return Result[T]{
+			Err: errors.New(fmt.Sprintf("Result not found for ID: '%d'", id)),
+		}
+	}
 }
 
 // unWait is used to signal to the Submit method that the Result is available in the response map given Job ID
@@ -79,6 +81,7 @@ func (mb *MicroBatcher[_, _]) unWait(id Id) {
 	if ok {
 		mb.log.Debug("loaded recv channel", "JobId", id)
 		recv.(chan any) <- uEvent{}
+		mb.wgResponse.Done()
 	} else {
 		mb.log.Error("could not load recv channel", "JobId", id)
 	}
@@ -114,40 +117,24 @@ func (mb *MicroBatcher[_, _]) Shutdown() {
 	mb.log.Debug("Remaining input items", "Count", mb.input.QueueLen())
 	mb.stopPeriodic()
 	mb.stopSend()
+	mb.wgResponse.Wait()
 }
 
 // handleResult adds a result to the response map and signals the result is available
 func (mb *MicroBatcher[_, R]) handleResult(result Result[R]) {
-	mb.responseMu.Lock()
-	mb.response[result.Id] = result
-	mb.responseMu.Unlock()
+	mb.response.Store(result.Id, result)
 	mb.unWait(result.Id)
 }
 
-type QueueThresholdEvent struct {
-	queueLength int
-}
-
-// inputQueueThreshold returns a function which emits QueueThresholdEvent whenever the queue length exceeds a threshold
-//
-// It is used as a hook for the input receiver
-func inputQueueThreshold(threshold int, evt *chan any) func(queueLength int) {
-	return func(queueLength int) {
-		if queueLength >= threshold {
-			*evt <- QueueThresholdEvent{queueLength}
-		}
-	}
-}
-
-func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
+func New[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger) MicroBatcher[T, R] {
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
 		logger = slog.New(handler)
 	}
 
-	sendChan := make(chan any, 10)
-	thresholdReached := inputQueueThreshold(conf.Batch.Threshold, &sendChan)
+	sendChan := make(chan any, 1)
+	thresholdReached := receiver.NewQueueThresholdHook(conf.Batch.Threshold, &sendChan)
 
 	return MicroBatcher[T, R]{
 		config:         conf,
@@ -164,12 +151,7 @@ func NewMicroBatcher[T, R any](conf UConfig, processor *BatchProcessor[T, R], lo
 		event: eventChannels{
 			send: sendChan,
 		},
-		// the response channel handles the results returned from the BatchProcessor
-		response: make(map[Id]Result[R]),
-
-		// the output channel buffers the jobs being sent to the BatchProcessor
-		output: make(chan []Job[T], 1),
-		log:    logger,
+		log: logger,
 	}
 }
 
@@ -186,6 +168,7 @@ func (mb *MicroBatcher[_, _]) Start() {
 func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 	if len(batch) > 0 {
 		mb.log.Info("Sending jobs to Batch processor", "JobCount", len(batch))
+		mb.wgResponse.Add(len(batch))
 		res := (*mb.BatchProcessor).Process(batch)
 		for i := 0; i < len(res); i++ {
 			mb.handleResult(res[i])
@@ -198,7 +181,7 @@ func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 // Submit adds a job to a micro batch and returns the result when it is available
 func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 	mb.preWait(job.Id)
-	err := mb.input.Submit(job)
+	err := mb.input.Add(job)
 	if err != nil {
 		return Result[R]{
 			Id:  job.Id,
