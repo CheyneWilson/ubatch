@@ -1,14 +1,15 @@
 package receiver
 
 type InputOptions struct {
-	ChannelLength int
-	QueueLength   int
+	// Size is the BufferSize of the pending channel.
+	ChannelSize int
+	// Default size for the input receiver queue. The queue will grow automatically as necessary.
+	QueueSize int
 }
 
 var DefaultConfig = InputOptions{
-	// Size is the BufferSize of the channel. Note, the default of 1 should be fine for most scenarios.
-	// TODO: test how the performance varies with changing ChannelLength
-	ChannelLength: 1,
-	// Default size for the input receiver queue. The queue will grow automatically as necessary.
-	QueueLength: 16,
+	// A pending channel 1 should be fine for most scenarios.
+	ChannelSize: 1,
+	// The default queue. It is resized automatically if too small
+	QueueSize: 16,
 }
