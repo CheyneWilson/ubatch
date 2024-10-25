@@ -59,9 +59,9 @@ type InputReceiver[T any] struct {
 	log *slog.Logger
 }
 
-// Submit an item to the InputReceiver.
+// Add an item to the InputReceiver.
 // This method safe for concurrent use by multiple goroutines.
-func (input *InputReceiver[T]) Submit(item T) error {
+func (input *InputReceiver[T]) Add(item T) error {
 	input.muAccept.RLock()
 	defer input.muAccept.RUnlock()
 	if input.accept {
@@ -152,6 +152,7 @@ func (input *InputReceiver[T]) Stop() {
 }
 
 // PrepareBatch creates a batch with all items from the InputReceiver and resets it to an empty state
+// This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) PrepareBatch() []T {
 	input.log.Debug("Preparing batch.")
 	input.muQueue.Lock()
@@ -165,18 +166,30 @@ func (input *InputReceiver[T]) PrepareBatch() []T {
 	return batch
 }
 
-// QueueLen returns the current number of items on the queue
+// QueueLen returns the current number of items on the queue.
+// This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) QueueLen() int {
 	input.muQueue.RLock()
 	defer input.muQueue.RUnlock()
 	return len(*input.queue)
 }
 
+// Total returns the current number of items pending and queued.
+// This method safe for concurrent use by multiple goroutines.
+func (input *InputReceiver[T]) Total() int {
+	input.muQueue.RLock()
+	defer input.muQueue.RUnlock()
+	input.muPending.RLock()
+	defer input.muPending.RUnlock()
+	total := len(*input.queue) + input.pending
+	return total
+}
+
 // New creates a new InputReceiver
 //
 // logger - optional
 func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLength int)) InputReceiver[T] {
-	queue := make([]T, 0, opts.QueueLength)
+	queue := make([]T, 0, opts.QueueSize)
 	if logger == nil {
 		// TODO: Similar functionality may be coming soon - see https://github.com/golang/go/issues/62005
 		handler := slog.NewTextHandler(io.Discard, nil)
@@ -184,7 +197,7 @@ func New[T any](opts InputOptions, logger *slog.Logger, onEnqueue func(queueLeng
 	}
 
 	return InputReceiver[T]{
-		receiver: make(chan T, opts.ChannelLength),
+		receiver: make(chan T, opts.ChannelSize),
 		queue:    &queue,
 		pending:  0,
 		log:      logger,

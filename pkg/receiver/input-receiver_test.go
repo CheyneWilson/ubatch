@@ -21,35 +21,35 @@ func configureLogger() *slog.Logger {
 
 var logger = configureLogger()
 
-// TestInputReceiver_SingleUser_Submit tests the job Submit method and receive process for a single consumer
-func TestInputReceiver_SingleUser_Submit(t *testing.T) {
+// TestInputReceiver_SingleUser_Add tests the job Add method and receive process for a single consumer
+func TestInputReceiver_SingleUser_Add(t *testing.T) {
 	var conf = DefaultConfig
 	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
 
 	for i := 0; i < 100; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 	assert.Equal(t, 100, inputReceiver.QueueLen())
 
 	for i := 0; i < 100; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 	assert.Equal(t, 200, inputReceiver.QueueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 1000; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 	assert.Equal(t, 1200, inputReceiver.QueueLen())
 
 	inputReceiver.Start()
 	for i := 0; i < 10000; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 
@@ -62,8 +62,8 @@ func TestInputReceiver_SingleUser_Submit(t *testing.T) {
 	}
 }
 
-// TestInputReceiver_MultiUser_Submit tests the job Submit method and receive process for multiple concurrent consumers
-func TestInputReceiver_MultiUser_Submit(t *testing.T) {
+// TestInputReceiver_MultiUser_Add tests the job Add method and receive process for multiple concurrent consumers
+func TestInputReceiver_MultiUser_Add(t *testing.T) {
 	var conf = DefaultConfig
 	var inputReceiver = New[Job[int]](conf, logger, nil)
 	jobs := feeder.NewSequentialJobFeeder()
@@ -75,7 +75,7 @@ func TestInputReceiver_MultiUser_Submit(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				_ = inputReceiver.Submit(jobs.Feed())
+				_ = inputReceiver.Add(jobs.Feed())
 			}
 		}()
 	}
@@ -105,7 +105,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	inputReceiver.Start()
 
 	for i := 0; i < 100; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 	jobsBatch1 := inputReceiver.PrepareBatch()
@@ -118,7 +118,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 	}
 	inputReceiver.flushPending()
 	jobsBatch2 := inputReceiver.PrepareBatch()
@@ -132,7 +132,7 @@ func TestInputReceiver_SingleUser_PrepareBatch(t *testing.T) {
 	}
 }
 
-// TestInputReceiver_SingleUser_Concurrent_PrepareBatch tests the Submit and PrepareBatch methods being called
+// TestInputReceiver_SingleUser_Concurrent_PrepareBatch tests the Add and PrepareBatch methods being called
 // concurrently. It is semi-deterministic test, all batched jobs will appear in order, but the size of each
 // batch could vary depending on the contents of the queue when PrepareBatch triggers
 func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
@@ -144,7 +144,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	var batches = make([][]Job[int], 0, 10)
 
 	for i := 0; i < 100; i++ {
-		_ = inputReceiver.Submit(jobs.Feed())
+		_ = inputReceiver.Add(jobs.Feed())
 		if i%10 == 0 {
 			b := inputReceiver.PrepareBatch()
 			batches = append(batches, b)
@@ -154,7 +154,7 @@ func TestInputReceiver_SingleUser_Concurrent_PrepareBatch(t *testing.T) {
 	expectedBatchCount := 10
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
-	// last of the pending items (it's only 1 because Submit is a synchronous call)
+	// last of the pending items (it's only 1 because Add is a synchronous call)
 	if b := inputReceiver.PrepareBatch(); len(b) > 0 {
 		batches = append(batches, b)
 		expectedBatchCount += 1
@@ -191,7 +191,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				_ = inputReceiver.Submit(jobs.Feed())
+				_ = inputReceiver.Add(jobs.Feed())
 				// Prepare a batch every 100 iterations, due to the concurrency of 100 goroutines, this will result
 				// in some janky batch sizes, both small and large
 				if i%100 == 0 {
@@ -207,7 +207,7 @@ func TestInputReceiver_MultiUser_Concurrent_PrepareBatch(t *testing.T) {
 	inputReceiver.flushPending()
 
 	// In rare cases we could have a final batch of 1 item if the inputReceiver hasn't yet processed the
-	// last of the pending items (it's only 1 because Submit is a synchronous call)
+	// last of the pending items (it's only 1 because Add is a synchronous call)
 	if b := inputReceiver.PrepareBatch(); len(b) > 0 {
 		batches = append(batches, b)
 	}
@@ -236,7 +236,7 @@ func TestInputReceiver_nilLogger(t *testing.T) {
 	var inputReceiver = New[Job[int]](conf, nil, nil)
 	jobs := feeder.NewSequentialJobFeeder()
 	inputReceiver.Start()
-	_ = inputReceiver.Submit(jobs.Feed())
+	_ = inputReceiver.Add(jobs.Feed())
 	inputReceiver.flushPending()
 	jobsBatch := inputReceiver.PrepareBatch()
 	assert.Equal(t, jobsBatch[0].Id, Id(0))
@@ -250,14 +250,14 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	jobs := feeder.NewSequentialJobFeeder()
 
 	// If the inputReceiver has not been started, it should refuse jobs
-	err := inputReceiver.Submit(jobs.Feed())
+	err := inputReceiver.Add(jobs.Feed())
 	assert.Equal(t, ErrJobRefused, err)
 
 	inputReceiver.Start()
 	assert.Equal(t, STARTED, inputReceiver.control.state)
 
 	// Once started, jobs should be accepted without error
-	err = inputReceiver.Submit(jobs.Feed())
+	err = inputReceiver.Add(jobs.Feed())
 	if err != nil {
 		t.Fatal("did not expect an error", err)
 	}
@@ -266,7 +266,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	assert.Equal(t, STOPPED, inputReceiver.control.state)
 
 	// And when stopped it should error again
-	err = inputReceiver.Submit(jobs.Feed())
+	err = inputReceiver.Add(jobs.Feed())
 	assert.Equal(t, ErrJobRefused, err)
 
 	// Start everything again to check the state transition
@@ -274,7 +274,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	assert.Equal(t, STARTED, inputReceiver.control.state)
 
 	// It should accept jobs once more
-	err = inputReceiver.Submit(jobs.Feed())
+	err = inputReceiver.Add(jobs.Feed())
 	if err != nil {
 		t.Fatal("did not expect an error", err)
 	}
@@ -284,7 +284,7 @@ func TestInputReceiver_StopStart(t *testing.T) {
 	assert.Equal(t, STOPPED, inputReceiver.control.state)
 
 	// And when stopped it should once more
-	err = inputReceiver.Submit(jobs.Feed())
+	err = inputReceiver.Add(jobs.Feed())
 	assert.Equal(t, ErrJobRefused, err)
 }
 

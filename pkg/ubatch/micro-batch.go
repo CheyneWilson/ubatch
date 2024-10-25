@@ -133,7 +133,7 @@ func New[T, R any](conf UConfig, processor *BatchProcessor[T, R], logger *slog.L
 		logger = slog.New(handler)
 	}
 
-	sendChan := make(chan any, 10)
+	sendChan := make(chan any, 1)
 	thresholdReached := receiver.NewQueueThresholdHook(conf.Batch.Threshold, &sendChan)
 
 	return MicroBatcher[T, R]{
@@ -181,7 +181,7 @@ func (mb *MicroBatcher[T, _]) sendBatch(batch []Job[T]) {
 // Submit adds a job to a micro batch and returns the result when it is available
 func (mb *MicroBatcher[T, R]) Submit(job Job[T]) Result[R] {
 	mb.preWait(job.Id)
-	err := mb.input.Submit(job)
+	err := mb.input.Add(job)
 	if err != nil {
 		return Result[R]{
 			Id:  job.Id,

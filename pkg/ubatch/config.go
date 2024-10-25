@@ -36,8 +36,8 @@ var DefaultConfig = UConfig{
 	},
 	Input: receiver.InputOptions{
 		// The size of the input receiver channel. Note, the default of 1 should be fine for most scenarios.
-		ChannelLength: 1,
+		ChannelSize: 1,
 		// Default size for the input receiver queue. The queue will grow automatically as necessary.
-		QueueLength: 16,
+		QueueSize: 16,
 	},
 }

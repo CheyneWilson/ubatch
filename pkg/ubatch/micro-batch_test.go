@@ -58,8 +58,7 @@ func TestMicroBatcher_EndToEnd_Batch(t *testing.T) {
 func TestMicroBatcher_MultiUser_Submit(t *testing.T) {
 	var batchProcessor = echo.NewEchoService[int](0)
 	conf := DefaultConfig
-	//conf.Batch.Interval = 10 * time.Millisecond
-	conf.Batch.Interval = 5 * time.Second
+	conf.Batch.Interval = 1 * time.Second
 	microBatcher := New[int, int](conf, &batchProcessor, logger)
 	microBatcher.Start()
 	jobs := feeder.NewSequentialJobFeeder()
@@ -143,7 +142,7 @@ func TestMicroBatcher_SingleUser_Threshold(t *testing.T) {
 				assert.Nil(t, r.Err)
 			}()
 		}
-		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Submit method call to complete
+		// Note, we don't call wg.Wait() here, because each goroutine will be waiting on it's Add method call to complete
 		t.Log("Waiting for 5 seconds")
 		select {
 		case <-time.After(5 * time.Second):
