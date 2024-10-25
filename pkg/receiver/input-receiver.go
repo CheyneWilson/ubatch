@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 )
 
 var (
@@ -38,8 +39,7 @@ type inputReceiverControl struct {
 // Jobs are transferred from the receiver channel to the queue.
 type InputReceiver[T any] struct {
 	// if accept is false, any items submitted are rejected with a ErrJobRefused
-	accept   bool
-	muAccept sync.RWMutex
+	accept atomic.Bool
 
 	// The receiver buffers incoming Jobs before they are added to the queue
 	receiver chan T
@@ -62,9 +62,7 @@ type InputReceiver[T any] struct {
 // Add an item to the InputReceiver.
 // This method safe for concurrent use by multiple goroutines.
 func (input *InputReceiver[T]) Add(item T) error {
-	input.muAccept.RLock()
-	defer input.muAccept.RUnlock()
-	if input.accept {
+	if input.accept.Load() {
 		input.muPending.Lock()
 		input.pending += 1
 		input.muPending.Unlock()
@@ -128,7 +126,7 @@ func (input *InputReceiver[T]) inputReceiverLoop() {
 func (input *InputReceiver[T]) Start() {
 	if input.control.state == STOPPED {
 		input.control.state = STARTING
-		input.accept = true
+		input.accept.Store(true)
 		go input.inputReceiverLoop()
 		input.control.state = STARTED
 	} else {
@@ -142,7 +140,7 @@ func (input *InputReceiver[T]) Start() {
 func (input *InputReceiver[T]) Stop() {
 	if input.control.state == STARTED {
 		input.control.state = STOPPING
-		input.accept = false
+		input.accept.Store(false)
 		input.control.stopReceiver <- true
 		<-input.control.receiverStopped
 		input.control.state = STOPPED
