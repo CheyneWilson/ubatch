@@ -22,17 +22,17 @@ service when either of the following conditions are met:
 * A batch size reaches a certain threshold
 * Periodically, regardless of batch size
 
-Jobs are submitted to the micro-batch processor via the `Submit(job Job[T]) Result[R]`. This returns when the
+Jobs are submitted to the micro-batch processor via the `Submit(job Job[T]) Result[R]` method. This returns when the
 micro-batch has been processed and the result is available.
-
-# Usage
-
-The `MicroBatcher` is created via the `NewMicroBatcher(conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger)`
-function. The logger is optional and `nil` can be provided which will disable logging.
 
 ## Importing
 
-This package has not been published to a package repo. See roadmap for more info
+This package has not been published to a package repo. See roadmap for more info.
+
+# Usage
+
+The `MicroBatcher` is created via the `ubatch.New(conf UConfig, processor *BatchProcessor[T, R], logger *slog.Logger)`
+function. The logger is optional and `nil` can be provided which will disable logging.
 
 ## Batch Processor
 
@@ -78,7 +78,7 @@ import (
 func main() {
 	log := slog.Default()
 	batchProcessor := echo.NewEchoService[string](0)
-	microBatcher := ubatch.NewMicroBatcher(ubatch.DefaultConfig, &batchProcessor, log)
+	microBatcher := ubatch.New(ubatch.DefaultConfig, &batchProcessor, log)
 	microBatcher.Start()
 	job := types.Job[string]{Data: "Hello", Id: 1}
 	r := microBatcher.Submit(job)
